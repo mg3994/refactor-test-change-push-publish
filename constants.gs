@@ -54,6 +54,8 @@ var SHEET_HEADERS = {
     "order_id",
     "amount",
     "status",
+    "payment_method",
+    "payment_description",
     "raw_metadata",
     "created_at",
   ],

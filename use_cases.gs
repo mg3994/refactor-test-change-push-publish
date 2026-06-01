@@ -280,20 +280,38 @@ UseCases.processPayment = function(payload) {
   var paymentId = App.Utils.generateId("PAY");
   var nowStr = new Date().toISOString();
 
+  // Handle Google Pay Payload specifically
+  var paymentMethod = "UPI";
+  var paymentDescription = "Standard Transaction";
+  var transactionRef = payload.transactionRef || "";
+
+  if (payload.googlePayResponse) {
+    var gpay = payload.googlePayResponse;
+    paymentMethod = gpay.details && gpay.details.paymentMethodData ? gpay.details.paymentMethodData.type : "GOOGLE_PAY";
+    paymentDescription = gpay.details && gpay.details.paymentMethodData ? gpay.details.paymentMethodData.description : "Google Pay Transaction";
+
+    // Extract token or transaction ref from GPay response if available
+    if (gpay.details && gpay.details.paymentMethodData && gpay.details.paymentMethodData.tokenizationData) {
+      transactionRef = gpay.details.paymentMethodData.tokenizationData.token;
+    }
+  }
+
   var paymentData = [
     paymentId,
-    payload.transactionRef,
+    transactionRef,
     "", // refund_ref
     authResult.uid,
     payload.orderId,
     payload.amount,
     "SUCCESS",
-    JSON.stringify(payload.metadata || {}),
+    paymentMethod,
+    paymentDescription,
+    JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
     nowStr
   ];
 
   App.Repositories.Payments.add(paymentData);
-  return { paymentId: paymentId, status: "SUCCESS" };
+  return { paymentId: paymentId, status: "SUCCESS", method: paymentMethod };
 };
 
 (function() {

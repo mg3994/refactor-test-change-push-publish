@@ -8,7 +8,8 @@ function runTests() {
     testServiceInitialization,
     testUseCaseInitialization,
     testEcommerceRepositoryInitialization,
-    testEcommerceUseCaseInitialization
+    testEcommerceUseCaseInitialization,
+    testGooglePayProcessing
   ];
 
   var results = [];
@@ -62,4 +63,58 @@ function testEcommerceUseCaseInitialization() {
   if (!App.UseCases.getProducts) throw new Error("getProducts use case missing");
   if (!App.UseCases.addReview) throw new Error("addReview use case missing");
   if (!App.UseCases.processPayment) throw new Error("processPayment use case missing");
+}
+
+function testGooglePayProcessing() {
+  var gpayPayload = {
+    "method": "https://google.com/pay",
+    "payer": {
+      "name": "Card Holder Name",
+      "email": "manishgautammg7@yahoo.com",
+      "phone": "+1 650-555-5555"
+    },
+    "details": {
+      "apiVersion": 2,
+      "apiVersionMinor": 0,
+      "email": "manishgautammg7@yahoo.com",
+      "paymentMethodData": {
+        "description": "Test Card: Visa •••• 1111",
+        "info": {
+          "billingAddress": {
+            "countryCode": "US",
+            "name": "Card Holder Name",
+            "phoneNumber": "+1 650-555-5555",
+            "postalCode": "94043"
+          },
+          "cardDetails": "1111",
+          "cardFundingSource": "CREDIT",
+          "cardNetwork": "VISA"
+        },
+        "tokenizationData": {
+          "token": "examplePaymentMethodToken",
+          "type": "PAYMENT_GATEWAY"
+        },
+        "type": "CARD"
+      }
+    }
+  };
+
+  var payload = {
+    idToken: "valid_token",
+    orderId: "ORD-123",
+    amount: 100,
+    googlePayResponse: gpayPayload
+  };
+
+  // Mock AuthService
+  var originalVerify = App.Services.Auth.verifyToken;
+  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "test_user" }; };
+
+  try {
+    var result = App.UseCases.processPayment(payload);
+    if (result.status !== "SUCCESS") throw new Error("Payment failed");
+    if (result.method !== "CARD") throw new Error("Expected method CARD, got " + result.method);
+  } finally {
+    App.Services.Auth.verifyToken = originalVerify;
+  }
 }
