@@ -1,3 +1,34 @@
+function getOrCreateSheet(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // If not bound to a container, fall back to the standalone spreadsheet ID
+  if (!ss) {
+    var settings = getSettings();
+    if (!settings.SPREADSHEET_ID) {
+      throw new Error("SPREADSHEET_ID is not configured");
+    }
+    ss = SpreadsheetApp.openById(settings.SPREADSHEET_ID);
+  }
+
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+
+    // Dynamically look up the headers using the sheet name
+    var headers = SHEET_HEADERS[name] || [];
+
+    // Check if matching headers were actually defined in your configuration
+    if (headers && headers.length > 0) {
+      sheet.appendRow(headers);
+      sheet
+        .getRange(1, 1, 1, headers.length)
+        .setFontWeight("bold")
+        .setBackground("#E0E0E0");
+    }
+  }
+  return sheet;
+}
+
 function getSheetRowsAsJson(sheetName) {
   var sheet = getOrCreateSheet(sheetName);
   var values = sheet.getDataRange().getValues();
