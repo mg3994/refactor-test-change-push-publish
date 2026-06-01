@@ -5,74 +5,41 @@ var AppController = {
   handleRequest: function(e) {
     try {
       var payload = App.Utils.parsePayload(e);
-      if (!payload.action) {
-        return App.Response.error("Action target missing");
-      }
+      if (!payload.action) return App.Response.error("Action target missing");
 
-      var result;
-      switch (payload.action) {
-        case App.Constants.ACTIONS.VERIFY_TOKEN:
-          result = App.UseCases.verifyToken(payload);
-          break;
-        case App.Constants.ACTIONS.SYNC_DEVICE:
-          result = App.UseCases.syncDevice(payload);
-          break;
-        case App.Constants.ACTIONS.LOGOUT_DEVICE:
-          result = App.UseCases.logoutDevice(payload);
-          break;
-        case App.Constants.ACTIONS.GET_NOTIFICATIONS:
-          result = App.UseCases.getNotifications(payload);
-          break;
-        case App.Constants.ACTIONS.SEND_NOTIFICATION:
-          result = App.UseCases.sendNotification(payload);
-          break;
-        case App.Constants.ACTIONS.BROADCAST_NOTIFICATION:
-          result = App.UseCases.broadcastNotification(payload);
-          break;
-        case App.Constants.ACTIONS.VERIFY_LOGISTICS:
-          result = App.UseCases.verifyLogistics(payload);
-          break;
-        case App.Constants.ACTIONS.GET_PLACE_SUGGESTIONS:
-          result = App.UseCases.getPlaceSuggestions(payload);
-          break;
-        case App.Constants.ACTIONS.PROCESS_LOCATION_METRICS:
-          result = App.UseCases.processLocationMetrics(payload);
-          break;
-        case App.Constants.ACTIONS.PROCESS_PIN_DROP_METRICS:
-          result = App.UseCases.processPinDropMetrics(payload);
-          break;
-        case App.Constants.ACTIONS.CREATE_ORDER:
-          result = App.UseCases.createOrder(payload);
-          break;
-        case App.Constants.ACTIONS.CANCEL_ORDER:
-          result = App.UseCases.cancelOrder(payload);
-          break;
-        case App.Constants.ACTIONS.GET_PRODUCTS:
-          result = App.UseCases.getProducts(payload);
-          break;
-        case App.Constants.ACTIONS.GET_CATEGORIES:
-          result = App.UseCases.getCategories(payload);
-          break;
-        case App.Constants.ACTIONS.ADD_REVIEW:
-          result = App.UseCases.addReview(payload);
-          break;
-        case App.Constants.ACTIONS.GET_REVIEWS:
-          result = App.UseCases.getReviews(payload);
-          break;
-        case App.Constants.ACTIONS.PROCESS_PAYMENT:
-          result = App.UseCases.processPayment(payload);
-          break;
-        case App.Constants.ACTIONS.SEARCH_PRODUCTS:
-          result = App.UseCases.searchProducts(payload);
-          break;
-        default:
-          return App.Response.error("Unknown action: " + payload.action);
-      }
+      var useCase = App.UseCases[payload.action] || this._findUseCaseByAction(payload.action);
+      if (!useCase) return App.Response.error("Unknown action: " + payload.action);
+
+      var result = useCase.execute(payload);
       return App.Response.success(result);
-
     } catch (err) {
       return App.Response.error(err.toString());
     }
+  },
+
+  _findUseCaseByAction: function(action) {
+    // Map action names to use case keys if they don't match exactly
+    var map = {};
+    map[App.Constants.ACTIONS.VERIFY_TOKEN] = App.UseCases.verifyToken;
+    map[App.Constants.ACTIONS.SYNC_DEVICE] = App.UseCases.syncDevice;
+    map[App.Constants.ACTIONS.LOGOUT_DEVICE] = App.UseCases.logoutDevice;
+    map[App.Constants.ACTIONS.GET_NOTIFICATIONS] = App.UseCases.getNotifications;
+    map[App.Constants.ACTIONS.SEND_NOTIFICATION] = App.UseCases.sendNotification;
+    map[App.Constants.ACTIONS.BROADCAST_NOTIFICATION] = App.UseCases.broadcastNotification;
+    map[App.Constants.ACTIONS.VERIFY_LOGISTICS] = App.UseCases.verifyLogistics;
+    map[App.Constants.ACTIONS.GET_PLACE_SUGGESTIONS] = App.UseCases.getPlaceSuggestions;
+    map[App.Constants.ACTIONS.PROCESS_LOCATION_METRICS] = App.UseCases.processLocationMetrics;
+    map[App.Constants.ACTIONS.PROCESS_PIN_DROP_METRICS] = App.UseCases.processPinDropMetrics;
+    map[App.Constants.ACTIONS.CREATE_ORDER] = App.UseCases.createOrder;
+    map[App.Constants.ACTIONS.CANCEL_ORDER] = App.UseCases.cancelOrder;
+    map[App.Constants.ACTIONS.GET_PRODUCTS] = App.UseCases.getProducts;
+    map[App.Constants.ACTIONS.GET_CATEGORIES] = App.UseCases.getCategories;
+    map[App.Constants.ACTIONS.ADD_REVIEW] = App.UseCases.addReview;
+    map[App.Constants.ACTIONS.GET_REVIEWS] = App.UseCases.getReviews;
+    map[App.Constants.ACTIONS.PROCESS_PAYMENT] = App.UseCases.processPayment;
+    map[App.Constants.ACTIONS.SEARCH_PRODUCTS] = App.UseCases.searchProducts;
+
+    return map[action];
   }
 };
 

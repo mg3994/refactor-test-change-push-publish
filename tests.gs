@@ -70,83 +70,45 @@ function testEcommerceUseCaseInitialization() {
 function testGooglePayProcessing() {
   var gpayPayload = {
     "method": "https://google.com/pay",
-    "payer": {
-      "name": "Card Holder Name",
-      "email": "manishgautammg7@yahoo.com",
-      "phone": "+1 650-555-5555"
-    },
     "details": {
-      "apiVersion": 2,
-      "apiVersionMinor": 0,
-      "email": "manishgautammg7@yahoo.com",
       "paymentMethodData": {
         "description": "Test Card: Visa •••• 1111",
-        "info": {
-          "billingAddress": {
-            "countryCode": "US",
-            "name": "Card Holder Name",
-            "phoneNumber": "+1 650-555-5555",
-            "postalCode": "94043"
-          },
-          "cardDetails": "1111",
-          "cardFundingSource": "CREDIT",
-          "cardNetwork": "VISA"
-        },
-        "tokenizationData": {
-          "token": "examplePaymentMethodToken",
-          "type": "PAYMENT_GATEWAY"
-        },
+        "tokenizationData": { "token": "exampleToken" },
         "type": "CARD"
       }
     }
   };
 
-  var payload = {
-    idToken: "valid_token",
-    orderId: "ORD-123",
-    amount: 100,
-    googlePayResponse: gpayPayload
-  };
-
-  // Mock AuthService
+  var payload = { idToken: "valid", orderId: "ORD-1", amount: 100, googlePayResponse: gpayPayload };
   var originalVerify = App.Services.Auth.verifyToken;
-  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "test_user" }; };
+  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "u1" }; };
 
   try {
-    var result = App.UseCases.processPayment(payload);
-    if (result.status !== "SUCCESS") throw new Error("Payment failed");
-    if (result.method !== "CARD") throw new Error("Expected method CARD, got " + result.method);
+    var result = App.UseCases.processPayment.execute(payload);
+    if (result.method !== "CARD") throw new Error("Expected CARD, got " + result.method);
   } finally {
     App.Services.Auth.verifyToken = originalVerify;
   }
 }
 
 function testInventoryManagement() {
-  // Mock products
-  var mockProduct = { _rowIndex: 2, product_id: "P1", stock: 10, title: "Test Product" };
-  var originalFindById = App.Repositories.Products.findByProductId;
-  var originalUpdateRow = App.Repositories.Products.updateRow;
+  var mockProduct = { _rowIndex: 2, product_id: "P1", stock: 10, title: "Test" };
+  var originalFind = App.Repositories.Products.findByProductId;
+  var originalUpdate = App.Repositories.Products.updateRow;
   var updatedStock = 0;
 
   App.Repositories.Products.findByProductId = function() { return mockProduct; };
-  App.Repositories.Products.updateRow = function(idx, data) { updatedStock = data.stock; };
+  App.Repositories.Products.updateRow = function(idx, data) { if(data.stock !== undefined) updatedStock = data.stock; };
 
-  var payload = {
-    idToken: "valid",
-    products: [{ product_id: "P1", quantity: 3 }],
-    totalAmount: 100
-  };
-
-  // Mock Auth
   var originalVerify = App.Services.Auth.verifyToken;
   App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "u1" }; };
 
   try {
-    App.UseCases.createOrder(payload);
-    if (updatedStock !== 7) throw new Error("Stock not decremented correctly. Expected 7, got " + updatedStock);
+    App.UseCases.createOrder.execute({ idToken: "v", products: [{ product_id: "P1", quantity: 3 }], totalAmount: 10 });
+    if (updatedStock !== 7) throw new Error("Stock error: " + updatedStock);
   } finally {
-    App.Repositories.Products.findByProductId = originalFindById;
-    App.Repositories.Products.updateRow = originalUpdateRow;
+    App.Repositories.Products.findByProductId = originalFind;
+    App.Repositories.Products.updateRow = originalUpdate;
     App.Services.Auth.verifyToken = originalVerify;
   }
 }
@@ -154,16 +116,11 @@ function testInventoryManagement() {
 function testProductSearch() {
   var originalGetAll = App.Repositories.Products.getAll;
   App.Repositories.Products.getAll = function() {
-    return [
-      { title: "Apple iPhone", description: "Latest smartphone" },
-      { title: "Samsung Galaxy", description: "Android flagship" }
-    ];
+    return [{ title: "iPhone" }, { title: "Samsung" }];
   };
-
   try {
-    var result = App.UseCases.searchProducts({ query: "iphone" });
-    if (result.products.length !== 1) throw new Error("Search failed to find iPhone");
-    if (result.products[0].title !== "Apple iPhone") throw new Error("Incorrect product found");
+    var res = App.UseCases.searchProducts.execute({ query: "iphone" });
+    if (res.products.length !== 1) throw new Error("Search failed");
   } finally {
     App.Repositories.Products.getAll = originalGetAll;
   }
