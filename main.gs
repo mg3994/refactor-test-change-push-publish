@@ -1,48 +1,66 @@
-function doPost(e) {
-  try {
-    var payload = parseRequestPayload(e);
+/**
+ * AppController to handle routing and execution flow
+ */
+var AppController = {
+  handleRequest: function(e) {
+    try {
+      var payload = App.Utils.parsePayload(e);
+      if (!payload.action) {
+        return App.Response.error("Action target missing");
+      }
 
-    if (!payload.action) {
-      return jsonError("Action target missing");
+      var result;
+      switch (payload.action) {
+        case App.Constants.ACTIONS.VERIFY_TOKEN:
+          result = App.UseCases.verifyToken(payload);
+          break;
+        case App.Constants.ACTIONS.SYNC_DEVICE:
+          result = App.UseCases.syncDevice(payload);
+          break;
+        case App.Constants.ACTIONS.LOGOUT_DEVICE:
+          result = App.UseCases.logoutDevice(payload);
+          break;
+        case App.Constants.ACTIONS.GET_NOTIFICATIONS:
+          result = App.UseCases.getNotifications(payload);
+          break;
+        case App.Constants.ACTIONS.SEND_NOTIFICATION:
+          result = App.UseCases.sendNotification(payload);
+          break;
+        case App.Constants.ACTIONS.BROADCAST_NOTIFICATION:
+          result = App.UseCases.broadcastNotification(payload);
+          break;
+        case App.Constants.ACTIONS.VERIFY_LOGISTICS:
+          result = App.UseCases.verifyLogistics(payload);
+          break;
+        case App.Constants.ACTIONS.GET_PLACE_SUGGESTIONS:
+          result = App.UseCases.getPlaceSuggestions(payload);
+          break;
+        case App.Constants.ACTIONS.PROCESS_LOCATION_METRICS:
+          result = App.UseCases.processLocationMetrics(payload);
+          break;
+        case App.Constants.ACTIONS.PROCESS_PIN_DROP_METRICS:
+          result = App.UseCases.processPinDropMetrics(payload);
+          break;
+        case App.Constants.ACTIONS.CREATE_ORDER:
+          result = App.UseCases.createOrder(payload);
+          break;
+        case App.Constants.ACTIONS.CANCEL_ORDER:
+          result = App.UseCases.cancelOrder(payload);
+          break;
+        default:
+          return App.Response.error("Unknown action: " + payload.action);
+      }
+      return App.Response.success(result);
+
+    } catch (err) {
+      return App.Response.error(err.toString());
     }
-
-    // Dynamic routing based on the payload action
-    switch (payload.action) {
-      case ACTIONS.VERIFY_TOKEN:
-        return handleVerifyFirebaseToken(payload);
-
-      case ACTIONS.SEND_NOTIFICATION:
-        return handleSendFcmNotification(payload);
-
-      case ACTIONS.BROADCAST_NOTIFICATION:
-        return handleBroadcastFcmNotification(payload);
-
-      case ACTIONS.GET_NOTIFICATIONS:
-        return handleGetNotifications(payload, e);
-      // --- Device Sync Routing Engines ---
-      case ACTIONS.SYNC_DEVICE:
-        return handleSyncDevice(payload); // Extracted execution frame logic below
-
-      case ACTIONS.LOGOUT_DEVICE:
-        return handleLogoutDevice(payload);
-
-      // Map Engine Actions Routed to MapsService.gs
-      case ACTIONS.GET_PLACE_SUGGESTIONS:
-        return handleGetPlaceSuggestions(payload);
-
-      case ACTIONS.PROCESS_LOCATION_METRICS:
-        return handleProcessLocationMetrics(payload);
-
-      case ACTIONS.PROCESS_PIN_DROP_METRICS:
-        return handleProcessPinDropMetrics(payload);
-
-      case ACTIONS.VERIFY_LOGISTICS:
-        return handleVerifyLogistics(payload);
-
-      default:
-        return jsonError("Unknown action: " + payload.action);
-    }
-  } catch (err) {
-    return jsonError(err.toString());
   }
+};
+
+/**
+ * Main entry point for POST requests
+ */
+function doPost(e) {
+  return AppController.handleRequest(e);
 }
