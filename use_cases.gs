@@ -236,6 +236,66 @@ var UseCases = {
   }
 };
 
+/**
+ * eCommerce specific Use Cases
+ */
+UseCases.getProducts = function(payload) {
+  var products = App.Repositories.Products.getAll();
+  if (payload.categoryId) {
+    products = products.filter(function(p) {
+      return p.category_ids && p.category_ids.split(",").indexOf(payload.categoryId) !== -1;
+    });
+  }
+  return { products: products };
+};
+
+UseCases.getCategories = function() {
+  return { categories: App.Repositories.Categories.getAll() };
+};
+
+UseCases.addReview = function(payload) {
+  var authResult = App.Services.Auth.verifyToken(payload.idToken);
+  if (!authResult.isValid) throw new Error("Unauthorized.");
+
+  var reviewData = [
+    payload.productId,
+    payload.orderId || "",
+    payload.reviewText,
+    payload.starRating,
+    new Date().toISOString()
+  ];
+  App.Repositories.Reviews.add(reviewData);
+  return { reviewed: true };
+};
+
+UseCases.getReviews = function(payload) {
+  if (!payload.productId) throw new Error("Product ID missing.");
+  return { reviews: App.Repositories.Reviews.findByProductId(payload.productId) };
+};
+
+UseCases.processPayment = function(payload) {
+  var authResult = App.Services.Auth.verifyToken(payload.idToken);
+  if (!authResult.isValid) throw new Error("Unauthorized.");
+
+  var paymentId = App.Utils.generateId("PAY");
+  var nowStr = new Date().toISOString();
+
+  var paymentData = [
+    paymentId,
+    payload.transactionRef,
+    "", // refund_ref
+    authResult.uid,
+    payload.orderId,
+    payload.amount,
+    "SUCCESS",
+    JSON.stringify(payload.metadata || {}),
+    nowStr
+  ];
+
+  App.Repositories.Payments.add(paymentData);
+  return { paymentId: paymentId, status: "SUCCESS" };
+};
+
 (function() {
   App.UseCases = UseCases;
 })();

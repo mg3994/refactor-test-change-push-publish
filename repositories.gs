@@ -90,11 +90,65 @@ OrderRepository.prototype.findByOrderId = function(orderId) {
   return this.findById("order_id", orderId);
 };
 
+/**
+ * Product Repository
+ */
+var ProductRepository = function() {
+  BaseRepository.call(this, "products");
+};
+ProductRepository.prototype = Object.create(BaseRepository.prototype);
+ProductRepository.prototype.constructor = ProductRepository;
+
+ProductRepository.prototype.findByProductId = function(productId) {
+  return this.findById("product_id", productId);
+};
+
+/**
+ * Category Repository
+ */
+var CategoryRepository = function() {
+  BaseRepository.call(this, "categories");
+};
+CategoryRepository.prototype = Object.create(BaseRepository.prototype);
+CategoryRepository.prototype.constructor = CategoryRepository;
+
+/**
+ * Review Repository
+ */
+var ReviewRepository = function() {
+  BaseRepository.call(this, "reviews");
+};
+ReviewRepository.prototype = Object.create(BaseRepository.prototype);
+ReviewRepository.prototype.constructor = ReviewRepository;
+
+ReviewRepository.prototype.findByProductId = function(productId) {
+  return this.findBy(function(r) {
+    return r.product_id == productId;
+  });
+};
+
+/**
+ * Payment Repository
+ */
+var PaymentRepository = function() {
+  BaseRepository.call(this, "payments");
+};
+PaymentRepository.prototype = Object.create(BaseRepository.prototype);
+PaymentRepository.prototype.constructor = PaymentRepository;
+
+PaymentRepository.prototype.findByOrderId = function(orderId) {
+  return this.findById("order_id", orderId);
+};
+
 // Initialize repositories in App namespace
 (function() {
   App.Repositories = {
     Sessions: new SessionRepository(),
     Notifications: new NotificationRepository(),
-    Orders: new OrderRepository()
+    Orders: new OrderRepository(),
+    Products: new ProductRepository(),
+    Categories: new CategoryRepository(),
+    Reviews: new ReviewRepository(),
+    Payments: new PaymentRepository()
   };
 })();

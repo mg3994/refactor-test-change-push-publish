@@ -47,6 +47,21 @@ var AppController = {
         case App.Constants.ACTIONS.CANCEL_ORDER:
           result = App.UseCases.cancelOrder(payload);
           break;
+        case App.Constants.ACTIONS.GET_PRODUCTS:
+          result = App.UseCases.getProducts(payload);
+          break;
+        case App.Constants.ACTIONS.GET_CATEGORIES:
+          result = App.UseCases.getCategories(payload);
+          break;
+        case App.Constants.ACTIONS.ADD_REVIEW:
+          result = App.UseCases.addReview(payload);
+          break;
+        case App.Constants.ACTIONS.GET_REVIEWS:
+          result = App.UseCases.getReviews(payload);
+          break;
+        case App.Constants.ACTIONS.PROCESS_PAYMENT:
+          result = App.UseCases.processPayment(payload);
+          break;
         default:
           return App.Response.error("Unknown action: " + payload.action);
       }

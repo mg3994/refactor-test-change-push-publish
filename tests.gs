@@ -6,7 +6,9 @@ function runTests() {
     testConfigInitialization,
     testRepositoryInitialization,
     testServiceInitialization,
-    testUseCaseInitialization
+    testUseCaseInitialization,
+    testEcommerceRepositoryInitialization,
+    testEcommerceUseCaseInitialization
   ];
 
   var results = [];
@@ -47,4 +49,17 @@ function testServiceInitialization() {
 function testUseCaseInitialization() {
   if (!App.UseCases.syncDevice) throw new Error("syncDevice use case missing");
   if (!App.UseCases.getNotifications) throw new Error("getNotifications use case missing");
+}
+
+function testEcommerceRepositoryInitialization() {
+  if (!App.Repositories.Products) throw new Error("Products repository missing");
+  if (!App.Repositories.Categories) throw new Error("Categories repository missing");
+  if (!App.Repositories.Reviews) throw new Error("Reviews repository missing");
+  if (!App.Repositories.Payments) throw new Error("Payments repository missing");
+}
+
+function testEcommerceUseCaseInitialization() {
+  if (!App.UseCases.getProducts) throw new Error("getProducts use case missing");
+  if (!App.UseCases.addReview) throw new Error("addReview use case missing");
+  if (!App.UseCases.processPayment) throw new Error("processPayment use case missing");
 }
