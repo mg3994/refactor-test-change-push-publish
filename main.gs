@@ -62,6 +62,9 @@ var AppController = {
         case App.Constants.ACTIONS.PROCESS_PAYMENT:
           result = App.UseCases.processPayment(payload);
           break;
+        case App.Constants.ACTIONS.SEARCH_PRODUCTS:
+          result = App.UseCases.searchProducts(payload);
+          break;
         default:
           return App.Response.error("Unknown action: " + payload.action);
       }

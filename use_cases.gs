@@ -191,31 +191,49 @@ var UseCases = {
   },
 
   createOrder: function(payload) {
-    // Basic implementation for CREATE_ORDER
     var authResult = App.Services.Auth.verifyToken(payload.idToken);
     if (!authResult.isValid) throw new Error("Unauthorized.");
 
-    var orderId = App.Utils.generateId("ORD");
-    var nowStr = new Date().toISOString();
+    return App.Utils.withLock(function() {
+      // Inventory Validation
+      var productsToOrder = payload.products || [];
+      var productUpdates = [];
 
-    var orderData = [
-      orderId,
-      authResult.uid,
-      JSON.stringify(payload.products),
-      payload.totalAmount,
-      payload.travelFee || 0,
-      App.Constants.ORDER_STATUS.PENDING,
-      payload.shippingPhone,
-      payload.fullAddress,
-      payload.latitude,
-      payload.longitude,
-      payload.customerNote || "",
-      nowStr,
-      nowStr
-    ];
+      productsToOrder.forEach(function(item) {
+        var product = App.Repositories.Products.findByProductId(item.product_id);
+        if (!product) throw new Error("Product not found: " + item.product_id);
+        var currentStock = parseInt(product.stock || 0, 10);
+        if (currentStock < item.quantity) throw new Error("Insufficient stock for: " + product.title);
+        productUpdates.push({ rowIndex: product._rowIndex, newStock: currentStock - item.quantity });
+      });
 
-    App.Repositories.Orders.add(orderData);
-    return { orderId: orderId, status: App.Constants.ORDER_STATUS.PENDING };
+      // Commit Inventory Changes
+      productUpdates.forEach(function(update) {
+        App.Repositories.Products.updateRow(update.rowIndex, { stock: update.newStock });
+      });
+
+      var orderId = App.Utils.generateId("ORD");
+      var nowStr = new Date().toISOString();
+
+      var orderData = [
+        orderId,
+        authResult.uid,
+        JSON.stringify(productsToOrder),
+        payload.totalAmount,
+        payload.travelFee || 0,
+        App.Constants.ORDER_STATUS.PENDING,
+        payload.shippingPhone,
+        payload.fullAddress,
+        payload.latitude,
+        payload.longitude,
+        payload.customerNote || "",
+        nowStr,
+        nowStr
+      ];
+
+      App.Repositories.Orders.add(orderData);
+      return { orderId: orderId, status: App.Constants.ORDER_STATUS.PENDING };
+    });
   },
 
   cancelOrder: function(payload) {
@@ -226,6 +244,17 @@ var UseCases = {
       var order = App.Repositories.Orders.findByOrderId(payload.orderId);
       if (!order) throw new Error("Order not found.");
       if (order.firebase_uid !== authResult.uid) throw new Error("Permission denied.");
+      if (order.status === App.Constants.ORDER_STATUS.CANCELLED) throw new Error("Order already cancelled.");
+
+      // Restore Inventory
+      var orderedProducts = JSON.parse(order.product_details || "[]");
+      orderedProducts.forEach(function(item) {
+        var product = App.Repositories.Products.findByProductId(item.product_id);
+        if (product) {
+          var currentStock = parseInt(product.stock || 0, 10);
+          App.Repositories.Products.updateRow(product._rowIndex, { stock: currentStock + item.quantity });
+        }
+      });
 
       App.Repositories.Orders.updateRow(order._rowIndex, {
         status: App.Constants.ORDER_STATUS.CANCELLED,
@@ -271,6 +300,18 @@ UseCases.addReview = function(payload) {
 UseCases.getReviews = function(payload) {
   if (!payload.productId) throw new Error("Product ID missing.");
   return { reviews: App.Repositories.Reviews.findByProductId(payload.productId) };
+};
+
+UseCases.searchProducts = function(payload) {
+  var query = (payload.query || "").toLowerCase();
+  var products = App.Repositories.Products.getAll();
+  if (query) {
+    products = products.filter(function(p) {
+      return (p.title || "").toLowerCase().indexOf(query) !== -1 ||
+             (p.description || "").toLowerCase().indexOf(query) !== -1;
+    });
+  }
+  return { products: products };
 };
 
 UseCases.processPayment = function(payload) {

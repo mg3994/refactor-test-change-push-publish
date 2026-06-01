@@ -9,7 +9,9 @@ function runTests() {
     testUseCaseInitialization,
     testEcommerceRepositoryInitialization,
     testEcommerceUseCaseInitialization,
-    testGooglePayProcessing
+    testGooglePayProcessing,
+    testInventoryManagement,
+    testProductSearch
   ];
 
   var results = [];
@@ -116,5 +118,53 @@ function testGooglePayProcessing() {
     if (result.method !== "CARD") throw new Error("Expected method CARD, got " + result.method);
   } finally {
     App.Services.Auth.verifyToken = originalVerify;
+  }
+}
+
+function testInventoryManagement() {
+  // Mock products
+  var mockProduct = { _rowIndex: 2, product_id: "P1", stock: 10, title: "Test Product" };
+  var originalFindById = App.Repositories.Products.findByProductId;
+  var originalUpdateRow = App.Repositories.Products.updateRow;
+  var updatedStock = 0;
+
+  App.Repositories.Products.findByProductId = function() { return mockProduct; };
+  App.Repositories.Products.updateRow = function(idx, data) { updatedStock = data.stock; };
+
+  var payload = {
+    idToken: "valid",
+    products: [{ product_id: "P1", quantity: 3 }],
+    totalAmount: 100
+  };
+
+  // Mock Auth
+  var originalVerify = App.Services.Auth.verifyToken;
+  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "u1" }; };
+
+  try {
+    App.UseCases.createOrder(payload);
+    if (updatedStock !== 7) throw new Error("Stock not decremented correctly. Expected 7, got " + updatedStock);
+  } finally {
+    App.Repositories.Products.findByProductId = originalFindById;
+    App.Repositories.Products.updateRow = originalUpdateRow;
+    App.Services.Auth.verifyToken = originalVerify;
+  }
+}
+
+function testProductSearch() {
+  var originalGetAll = App.Repositories.Products.getAll;
+  App.Repositories.Products.getAll = function() {
+    return [
+      { title: "Apple iPhone", description: "Latest smartphone" },
+      { title: "Samsung Galaxy", description: "Android flagship" }
+    ];
+  };
+
+  try {
+    var result = App.UseCases.searchProducts({ query: "iphone" });
+    if (result.products.length !== 1) throw new Error("Search failed to find iPhone");
+    if (result.products[0].title !== "Apple iPhone") throw new Error("Incorrect product found");
+  } finally {
+    App.Repositories.Products.getAll = originalGetAll;
   }
 }

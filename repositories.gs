@@ -6,23 +6,50 @@ var BaseRepository = function(sheetName) {
 };
 
 BaseRepository.prototype.getSheet = function() {
-  return getOrCreateSheet(this.sheetName);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    var settings = getSettings();
+    if (!settings.SPREADSHEET_ID) throw new Error("SPREADSHEET_ID not configured");
+    ss = SpreadsheetApp.openById(settings.SPREADSHEET_ID);
+  }
+
+  var sheet = ss.getSheetByName(this.sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(this.sheetName);
+    var headers = App.Constants.SHEET_HEADERS[this.sheetName] || [];
+    if (headers.length > 0) {
+      sheet.appendRow(headers);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#E0E0E0");
+    }
+  }
+  return sheet;
 };
 
 BaseRepository.prototype.getAll = function() {
-  return getSheetRowsAsJson(this.sheetName);
+  var sheet = this.getSheet();
+  var values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return [];
+
+  var headers = values[0];
+  var list = [];
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var obj = {};
+    for (var j = 0; j < headers.length; j++) {
+      obj[headers[j]] = row[j];
+    }
+    obj._rowIndex = i + 1;
+    list.push(obj);
+  }
+  return list;
 };
 
 BaseRepository.prototype.findById = function(idField, idValue) {
-  var rows = this.getAll();
-  return rows.find(function(r) {
-    return r[idField] == idValue;
-  });
+  return this.getAll().find(function(r) { return r[idField] == idValue; });
 };
 
 BaseRepository.prototype.findBy = function(filterFn) {
-  var rows = this.getAll();
-  return rows.filter(filterFn);
+  return this.getAll().filter(filterFn);
 };
 
 BaseRepository.prototype.add = function(dataArray) {
@@ -31,15 +58,9 @@ BaseRepository.prototype.add = function(dataArray) {
   SpreadsheetApp.flush();
 };
 
-BaseRepository.prototype.update = function(rowIndex, column, value) {
-  var sheet = this.getSheet();
-  sheet.getRange(rowIndex, column).setValue(value);
-  SpreadsheetApp.flush();
-};
-
 BaseRepository.prototype.updateRow = function(rowIndex, dataMap) {
   var sheet = this.getSheet();
-  var headers = SHEET_HEADERS[this.sheetName];
+  var headers = App.Constants.SHEET_HEADERS[this.sheetName];
   for (var key in dataMap) {
     var colIndex = headers.indexOf(key) + 1;
     if (colIndex > 0) {
@@ -50,97 +71,46 @@ BaseRepository.prototype.updateRow = function(rowIndex, dataMap) {
 };
 
 /**
- * Session Repository
+ * Entity Specific Repositories
  */
-var SessionRepository = function() {
-  BaseRepository.call(this, "sessions");
-};
+var SessionRepository = function() { BaseRepository.call(this, "sessions"); };
 SessionRepository.prototype = Object.create(BaseRepository.prototype);
 SessionRepository.prototype.constructor = SessionRepository;
+SessionRepository.prototype.findByClientId = function(id) { return this.findById("client_id", id); };
 
-SessionRepository.prototype.findByClientId = function(clientId) {
-  return this.findById("client_id", clientId);
-};
-
-/**
- * Notification Repository
- */
-var NotificationRepository = function() {
-  BaseRepository.call(this, "notifications");
-};
+var NotificationRepository = function() { BaseRepository.call(this, "notifications"); };
 NotificationRepository.prototype = Object.create(BaseRepository.prototype);
 NotificationRepository.prototype.constructor = NotificationRepository;
-
 NotificationRepository.prototype.findByUid = function(uid) {
-  return this.findBy(function(r) {
-    return String(r.firebase_uid) === String(uid);
-  });
+  return this.findBy(function(r) { return String(r.firebase_uid) === String(uid); });
 };
 
-/**
- * Order Repository
- */
-var OrderRepository = function() {
-  BaseRepository.call(this, "orders");
-};
+var OrderRepository = function() { BaseRepository.call(this, "orders"); };
 OrderRepository.prototype = Object.create(BaseRepository.prototype);
 OrderRepository.prototype.constructor = OrderRepository;
+OrderRepository.prototype.findByOrderId = function(id) { return this.findById("order_id", id); };
 
-OrderRepository.prototype.findByOrderId = function(orderId) {
-  return this.findById("order_id", orderId);
-};
-
-/**
- * Product Repository
- */
-var ProductRepository = function() {
-  BaseRepository.call(this, "products");
-};
+var ProductRepository = function() { BaseRepository.call(this, "products"); };
 ProductRepository.prototype = Object.create(BaseRepository.prototype);
 ProductRepository.prototype.constructor = ProductRepository;
+ProductRepository.prototype.findByProductId = function(id) { return this.findById("product_id", id); };
 
-ProductRepository.prototype.findByProductId = function(productId) {
-  return this.findById("product_id", productId);
-};
-
-/**
- * Category Repository
- */
-var CategoryRepository = function() {
-  BaseRepository.call(this, "categories");
-};
+var CategoryRepository = function() { BaseRepository.call(this, "categories"); };
 CategoryRepository.prototype = Object.create(BaseRepository.prototype);
 CategoryRepository.prototype.constructor = CategoryRepository;
 
-/**
- * Review Repository
- */
-var ReviewRepository = function() {
-  BaseRepository.call(this, "reviews");
-};
+var ReviewRepository = function() { BaseRepository.call(this, "reviews"); };
 ReviewRepository.prototype = Object.create(BaseRepository.prototype);
 ReviewRepository.prototype.constructor = ReviewRepository;
-
-ReviewRepository.prototype.findByProductId = function(productId) {
-  return this.findBy(function(r) {
-    return r.product_id == productId;
-  });
+ReviewRepository.prototype.findByProductId = function(id) {
+  return this.findBy(function(r) { return r.product_id == id; });
 };
 
-/**
- * Payment Repository
- */
-var PaymentRepository = function() {
-  BaseRepository.call(this, "payments");
-};
+var PaymentRepository = function() { BaseRepository.call(this, "payments"); };
 PaymentRepository.prototype = Object.create(BaseRepository.prototype);
 PaymentRepository.prototype.constructor = PaymentRepository;
 
-PaymentRepository.prototype.findByOrderId = function(orderId) {
-  return this.findById("order_id", orderId);
-};
-
-// Initialize repositories in App namespace
+// Initialize repositories
 (function() {
   App.Repositories = {
     Sessions: new SessionRepository(),
