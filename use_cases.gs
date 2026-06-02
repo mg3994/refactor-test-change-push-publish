@@ -20,7 +20,7 @@ SyncDeviceUseCase.prototype.execute = function(payload) {
     if (exist) {
       self.sessionRepo.updateRow(exist._rowIndex, { firebase_uid: uid, fcm_token: payload.deviceToken || "", last_synced: now });
     } else {
-      self.sessionRepo.add([payload.clientId, uid, payload.deviceToken || "", payload.clientName || "Browser", now]);
+      self.sessionRepo.add({ client_id: payload.clientId, firebase_uid: uid, fcm_token: payload.deviceToken || "", client_name: payload.clientName || "Browser", last_synced: now });
     }
     return { synced: true };
   });
@@ -128,36 +128,43 @@ CreateOrderUseCase.prototype.execute = function(payload) {
     var items = payload.products || [];
     var totalAmount = 0;
 
+    var adjustments = [];
     items.forEach(function(item) {
       var product = self.productRepo.findByProductId(item.product_id);
       if (!product) throw new App.AppError("Product not found: " + item.product_id, 404);
 
-      // Server-side total calculation to prevent manipulation
       totalAmount += parseFloat(product.price || 0) * parseInt(item.quantity, 10);
 
-      self.productRepo.decrementStock(item.product_id, item.quantity);
+      var nextStock = parseInt(product.stock || 0, 10) - item.quantity;
+      adjustments.push({ productId: item.product_id, delta: -item.quantity });
+
+      if (nextStock <= App.Config.LOW_STOCK_THRESHOLD) {
+        App.EventDispatcher.dispatch("LOW_STOCK_ALERT", { productId: item.product_id, stock: nextStock, title: product.title });
+      }
     });
+
+    self.productRepo.adjustStockBatch(adjustments);
 
     // Add travel fee if applicable
     var finalAmount = totalAmount + parseFloat(payload.travelFee || 0);
 
     var id = self.utils.generateId("ORD");
     var now = new Date().toISOString();
-    self.orderRepo.add([
-      id,
-      payload.user.uid,
-      JSON.stringify(items),
-      finalAmount,
-      payload.travelFee || 0,
-      "PENDING",
-      payload.shippingPhone,
-      payload.fullAddress,
-      payload.latitude,
-      payload.longitude,
-      payload.customerNote || "",
-      now,
-      now
-    ]);
+    self.orderRepo.add({
+      order_id: id,
+      firebase_uid: payload.user.uid,
+      product_details: JSON.stringify(items),
+      total_amount: finalAmount,
+      travel_fee: payload.travelFee || 0,
+      status: "PENDING",
+      shipping_phone: payload.shippingPhone,
+      full_address: payload.fullAddress,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      customer_note: payload.customerNote || "",
+      created_at: now,
+      updated_at: now
+    });
 
     App.EventDispatcher.dispatch("ORDER_CREATED", { orderId: id, uid: payload.user.uid, amount: finalAmount });
 
@@ -174,9 +181,13 @@ CancelOrderUseCase.prototype.execute = function(payload) {
     var o = self.orderRepo.findByOrderId(payload.orderId);
     if (!o || o.firebase_uid !== payload.user.uid) throw new App.AppError("Order not found or permission denied", 403);
     if (o.status === "CANCELLED") throw new App.AppError("Already cancelled", 400);
-    JSON.parse(o.product_details || "[]").forEach(function(item) {
-      self.productRepo.incrementStock(item.product_id, item.quantity);
+
+    var items = JSON.parse(o.product_details || "[]");
+    var adjustments = items.map(function(item) {
+      return { productId: item.product_id, delta: item.quantity };
     });
+
+    self.productRepo.adjustStockBatch(adjustments);
     self.orderRepo.updateRow(o._rowIndex, { status: "CANCELLED", updated_at: new Date().toISOString() });
     return { cancelled: true };
   });
@@ -192,21 +203,50 @@ GetOrdersUseCase.prototype.execute = function(payload) {
   return { orders: res.items, pagination: res.pagination };
 };
 
-var GetOrderDetailsUseCase = function(orderRepo) {
+var GetOrderDetailsUseCase = function(orderRepo, productRepo) {
   this.orderRepo = orderRepo;
+  this.productRepo = productRepo;
 };
 GetOrderDetailsUseCase.prototype.execute = function(payload) {
   var o = this.orderRepo.findByOrderId(payload.orderId);
   if (!o || o.firebase_uid !== payload.user.uid) throw new App.AppError("Order not found", 404);
+
+  // Enrich order with product details (The "Join")
+  var items = JSON.parse(o.product_details || "[]");
+  var self = this;
+  var enrichedItems = items.map(function(item) {
+    var product = self.productRepo.findByProductId(item.product_id);
+    if (product) {
+      item.title = product.title;
+      item.image_url = product.image_url;
+      item.description = product.description;
+      item.price_at_order = product.price; // or store this in the order originally
+    }
+    return item;
+  });
+
+  o.items = enrichedItems;
   return { order: o };
 };
 
-var GetProductsUseCase = function(productRepo, utils) { this.productRepo = productRepo; this.utils = utils; };
+var GetProductsUseCase = function(productRepo, reviewRepo, utils) { this.productRepo = productRepo; this.reviewRepo = reviewRepo; this.utils = utils; };
 GetProductsUseCase.prototype.execute = function(payload) {
   var all = this.productRepo.getAll();
+  var self = this;
+
   if (payload.categoryId) {
     all = all.filter(function(p) { return p.category_ids && String(p.category_ids).split(",").indexOf(String(payload.categoryId)) !== -1; });
   }
+
+  // Aggregate Ratings
+  all.forEach(function(p) {
+    var reviews = self.reviewRepo.findByProductId(p.product_id);
+    var count = reviews.length;
+    var avg = count > 0 ? (reviews.reduce(function(acc, r) { return acc + parseFloat(r.star_rating || 0); }, 0) / count) : 0;
+    p.averageRating = parseFloat(avg.toFixed(1));
+    p.reviewCount = count;
+  });
+
   var result = this.utils.paginate(all, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
 };
@@ -216,17 +256,46 @@ GetCategoriesUseCase.prototype.execute = function() { return { categories: this.
 
 var AddReviewUseCase = function(reviewRepo) { this.reviewRepo = reviewRepo; };
 AddReviewUseCase.prototype.execute = function(payload) {
-  this.reviewRepo.add([payload.productId, payload.orderId || "", payload.reviewText, payload.starRating, new Date().toISOString()]);
+  this.reviewRepo.add({
+    product_id: payload.productId,
+    order_id: payload.orderId || "",
+    review_text: payload.reviewText,
+    star_rating: payload.starRating,
+    created_at: new Date().toISOString()
+  });
   return { reviewed: true };
 };
 
-var GetReviewsUseCase = function(reviewRepo) { this.reviewRepo = reviewRepo; };
-GetReviewsUseCase.prototype.execute = function(payload) { return { reviews: this.reviewRepo.findByProductId(payload.productId) }; };
+var GetReviewsUseCase = function(reviewRepo, orderRepo, utils) {
+  this.reviewRepo = reviewRepo;
+  this.orderRepo = orderRepo;
+  this.utils = utils;
+};
+GetReviewsUseCase.prototype.execute = function(payload) {
+  var reviews = this.reviewRepo.findByProductId(payload.productId);
+  var userOrders = [];
 
-var SearchProductsUseCase = function(productRepo, utils) { this.productRepo = productRepo; this.utils = utils; };
+  if (payload.user && payload.user.uid) {
+    userOrders = this.orderRepo.findByUid(payload.user.uid);
+  }
+
+  // Tag Verified Purchases
+  reviews.forEach(function(r) {
+    r.isVerifiedPurchase = userOrders.some(function(o) {
+      var details = JSON.parse(o.product_details || "[]");
+      return details.some(function(item) { return item.product_id == r.product_id; });
+    });
+  });
+
+  var result = this.utils.paginate(reviews, payload.page, payload.limit);
+  return { reviews: result.items, pagination: result.pagination };
+};
+
+var SearchProductsUseCase = function(productRepo, reviewRepo, utils) { this.productRepo = productRepo; this.reviewRepo = reviewRepo; this.utils = utils; };
 SearchProductsUseCase.prototype.execute = function(payload) {
   var q = (payload.query || "").toLowerCase();
   var all = this.productRepo.getAll();
+  var self = this;
 
   // Search Filtering
   if (q) {
@@ -247,6 +316,15 @@ SearchProductsUseCase.prototype.execute = function(payload) {
   } else if (payload.sortBy === "price_desc") {
     all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
   }
+
+  // Aggregate Ratings
+  all.forEach(function(p) {
+    var reviews = self.reviewRepo.findByProductId(p.product_id);
+    var count = reviews.length;
+    var avg = count > 0 ? (reviews.reduce(function(acc, r) { return acc + parseFloat(r.star_rating || 0); }, 0) / count) : 0;
+    p.averageRating = parseFloat(avg.toFixed(1));
+    p.reviewCount = count;
+  });
 
   var result = this.utils.paginate(all, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
@@ -271,17 +349,69 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
   }
 
   var id = this.utils.generateId("PAY");
-  // payment_id, transaction_ref, refund_ref, firebase_uid, order_id, amount, status, payment_method, payment_description, payer_name, payer_email, payer_phone, raw_metadata, created_at
-  this.paymentRepo.add([
-    id, ref, "", payload.user.uid, payload.orderId, payload.amount, "SUCCESS",
-    method, desc, pName, pEmail, pPhone,
-    JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
-    new Date().toISOString()
-  ]);
+  this.paymentRepo.add({
+    payment_id: id,
+    transaction_ref: ref,
+    refund_ref: "",
+    firebase_uid: payload.user.uid,
+    order_id: payload.orderId,
+    amount: payload.amount,
+    status: "SUCCESS",
+    payment_method: method,
+    payment_description: desc,
+    payer_name: pName,
+    payer_email: pEmail,
+    payer_phone: pPhone,
+    raw_metadata: JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
+    created_at: new Date().toISOString()
+  });
 
   App.EventDispatcher.dispatch("PAYMENT_COMPLETED", { paymentId: id, orderId: payload.orderId, uid: payload.user.uid, amount: payload.amount });
 
   return { paymentId: id, status: "SUCCESS", method: method };
+};
+
+var RefundPaymentUseCase = function(paymentRepo, utils) {
+  this.paymentRepo = paymentRepo;
+  this.utils = utils;
+};
+RefundPaymentUseCase.prototype.execute = function(payload) {
+  var self = this;
+  return this.utils.withLock(function() {
+    var p = self.paymentRepo.findById("payment_id", payload.paymentId);
+    if (!p) throw new App.AppError("Payment record not found", 404);
+    if (p.status === "REFUNDED") throw new App.AppError("Payment already refunded", 400);
+
+    var refundRef = payload.refundRef || "REF-" + Date.now();
+    self.paymentRepo.updateRow(p._rowIndex, {
+      status: "REFUNDED",
+      refund_ref: refundRef,
+      updated_at: new Date().toISOString()
+    });
+
+    App.EventDispatcher.dispatch("PAYMENT_REFUNDED", { paymentId: payload.paymentId, orderId: p.order_id });
+    return { refunded: true, refundRef: refundRef };
+  });
+};
+
+var UpdateOrderStatusUseCase = function(orderRepo, utils) {
+  this.orderRepo = orderRepo;
+  this.utils = utils;
+};
+UpdateOrderStatusUseCase.prototype.execute = function(payload) {
+  var self = this;
+  return this.utils.withLock(function() {
+    var o = self.orderRepo.findByOrderId(payload.orderId);
+    if (!o) throw new App.AppError("Order not found", 404);
+
+    self.orderRepo.updateRow(o._rowIndex, {
+      status: payload.status,
+      updated_at: new Date().toISOString()
+    });
+
+    App.EventDispatcher.dispatch("ORDER_STATUS_UPDATED", { orderId: payload.orderId, status: payload.status });
+    return { orderId: payload.orderId, status: payload.status };
+  });
 };
 
 // Application Assembly
@@ -304,6 +434,16 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
     }
   });
 
+  App.EventDispatcher.on("LOW_STOCK_ALERT", function(data) {
+    r.Logs.add({
+      timestamp: new Date().toISOString(),
+      action: "LOW_STOCK_ALERT",
+      firebase_uid: "system",
+      status: "WARNING",
+      details: "Product " + data.title + " (" + data.productId + ") is low on stock: " + data.stock
+    });
+  });
+
   App.UseCases = {
     verifyToken: new VerifyTokenUseCase(),
     syncDevice: new SyncDeviceUseCase(r.Sessions, u),
@@ -318,12 +458,14 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
     createOrder: new CreateOrderUseCase(r.Products, r.Orders, u),
     cancelOrder: new CancelOrderUseCase(r.Products, r.Orders, u),
     getOrders: new GetOrdersUseCase(r.Orders, u),
-    getOrderDetails: new GetOrderDetailsUseCase(r.Orders),
-    getProducts: new GetProductsUseCase(r.Products, u),
+    getOrderDetails: new GetOrderDetailsUseCase(r.Orders, r.Products),
+    getProducts: new GetProductsUseCase(r.Products, r.Reviews, u),
     getCategories: new GetCategoriesUseCase(r.Categories),
     addReview: new AddReviewUseCase(r.Reviews),
-    getReviews: new GetReviewsUseCase(r.Reviews),
-    searchProducts: new SearchProductsUseCase(r.Products, u),
-    processPayment: new ProcessPaymentUseCase(r.Payments, u)
+    getReviews: new GetReviewsUseCase(r.Reviews, r.Orders, u),
+    searchProducts: new SearchProductsUseCase(r.Products, r.Reviews, u),
+    processPayment: new ProcessPaymentUseCase(r.Payments, u),
+    refundPayment: new RefundPaymentUseCase(r.Payments, u),
+    updateOrderStatus: new UpdateOrderStatusUseCase(r.Orders, u)
   };
 })();

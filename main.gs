@@ -34,6 +34,8 @@ var AppController = (function() {
     registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], {}];
     registry[a.GET_ORDERS] = [u.getOrders, [auth], { idToken: "string" }];
     registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], { idToken: "string", orderId: "string" }];
+    registry[a.REFUND_PAYMENT] = [u.refundPayment, [auth], { idToken: "string", paymentId: "string" }];
+    registry[a.UPDATE_ORDER_STATUS] = [u.updateOrderStatus, [auth], { idToken: "string", orderId: "string", status: "string" }];
   }
 
   function runPipeline(middlewares, payload, finalTask) {
@@ -68,7 +70,8 @@ var AppController = (function() {
         var pipeline = globalMiddlewares.concat(localMiddlewares);
 
         // Add implicit Validation Middleware if schema exists
-        if (schema && schema.length > 0) {
+        var hasSchema = schema && (Array.isArray(schema) ? schema.length > 0 : Object.keys(schema).length > 0);
+        if (hasSchema) {
           pipeline.push(function(p, next) {
             App.Utils.validate(p, schema);
             return next();
@@ -79,12 +82,13 @@ var AppController = (function() {
           return useCase.execute(p);
         });
 
-        return App.Response.success(result);
+        return App.Response.success(result, payload.action);
       } catch (err) {
         var status = err.status || 500;
         var message = err.message || err.toString();
+        var action = (typeof payload !== 'undefined' && payload) ? payload.action : undefined;
         if (status === 500) Logger.log("Critical Error: " + (err.stack || err));
-        return App.Response.error(message, status);
+        return App.Response.error(message, status, action);
       }
     }
   };

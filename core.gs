@@ -111,7 +111,8 @@ var App = App || {};
       MAX_SERVICE_RADIUS_KM: parseFloat(props.MAX_SERVICE_RADIUS_KM || "30"),
       TRAVEL_FEE_PER_KM: parseFloat(props.TRAVEL_FEE_PER_KM || "5"),
       TIMEZONE: props.TIMEZONE || Session.getScriptTimeZone(),
-      NOTIFICATIONS_ENABLED: props.NOTIFICATIONS_ENABLED === "false" ? "false" : "true"
+      NOTIFICATIONS_ENABLED: props.NOTIFICATIONS_ENABLED === "false" ? "false" : "true",
+      LOW_STOCK_THRESHOLD: parseInt(props.LOW_STOCK_THRESHOLD || "5", 10)
     };
   })();
 
@@ -131,12 +132,16 @@ var App = App || {};
    * Response Helpers
    */
   App.Response = {
-    success: function(data) {
-      return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
+    success: function(data, action) {
+      var envelope = { success: true, timestamp: new Date().toISOString(), data: data };
+      if (action) envelope.action = action;
+      return ContentService.createTextOutput(JSON.stringify(envelope))
         .setMimeType(ContentService.MimeType.JSON);
     },
-    error: function(message, status) {
-      return ContentService.createTextOutput(JSON.stringify({ success: false, error: message, status: status || 500 }))
+    error: function(message, status, action) {
+      var envelope = { success: false, timestamp: new Date().toISOString(), error: message, status: status || 500 };
+      if (action) envelope.action = action;
+      return ContentService.createTextOutput(JSON.stringify(envelope))
         .setMimeType(ContentService.MimeType.JSON);
     }
   };
@@ -187,27 +192,45 @@ var App = App || {};
     },
 
     validate: function(payload, schema) {
-      // schema can be array of strings (backwards compatibility) or object { field: type }
+      var self = this;
       if (Array.isArray(schema)) {
         schema.forEach(function(field) {
           if (!payload[field]) throw new App.ValidationError("Missing required field: " + field);
         });
-      } else {
-        Object.keys(schema).forEach(function(field) {
-          var expectedType = schema[field];
-          var val = payload[field];
-
-          if (val === undefined || val === null || val === "") {
-            throw new App.ValidationError("Missing required field: " + field);
-          }
-
-          if (expectedType === "array" && !Array.isArray(val)) {
-            throw new App.ValidationError("Field " + field + " must be an array");
-          } else if (expectedType !== "array" && typeof val !== expectedType) {
-            throw new App.ValidationError("Field " + field + " must be a " + expectedType);
-          }
-        });
+        return;
       }
+
+      Object.keys(schema).forEach(function(field) {
+        var rule = schema[field];
+        var val = payload[field];
+        var type = typeof rule === 'string' ? rule : rule.type;
+
+        if (val === undefined || val === null || val === "") {
+          throw new App.ValidationError("Missing required field: " + field);
+        }
+
+        // Type Check
+        if (type === "array" && !Array.isArray(val)) throw new App.ValidationError("Field " + field + " must be an array");
+        if (type !== "array" && typeof val !== type) throw new App.ValidationError("Field " + field + " must be a " + type);
+
+        // Nested Validation for Arrays of Objects
+        if (type === "array" && rule.items && Array.isArray(val)) {
+          val.forEach(function(item, idx) {
+            try {
+              self.validate(item, rule.items);
+            } catch (e) {
+              throw new App.ValidationError("Invalid item at " + field + "[" + idx + "]: " + e.message);
+            }
+          });
+        }
+
+        // Complex Rules
+        if (typeof rule === 'object') {
+          if (rule.min !== undefined && val < rule.min) throw new App.ValidationError("Field " + field + " must be at least " + rule.min);
+          if (rule.max !== undefined && val > rule.max) throw new App.ValidationError("Field " + field + " must be at most " + rule.max);
+          if (rule.pattern && !new RegExp(rule.pattern).test(val)) throw new App.ValidationError("Field " + field + " format is invalid");
+        }
+      });
     }
   };
 

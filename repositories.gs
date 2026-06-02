@@ -26,12 +26,17 @@ BaseRepository.prototype.getSheet = function() {
 };
 
 BaseRepository.prototype.getAll = function() {
+  if (this._cache) return this._cache;
+
   var sheet = this.getSheet();
   var values = sheet.getDataRange().getValues();
   if (values.length <= 1) return [];
 
   var headers = values[0];
   var list = [];
+  this._indexMap = {};
+  var idKey = App.Constants.SHEET_HEADERS[this.sheetName][0]; // Assume first column is ID
+
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
     var obj = {};
@@ -40,11 +45,21 @@ BaseRepository.prototype.getAll = function() {
     }
     obj._rowIndex = i + 1;
     list.push(obj);
+
+    // Cache row index by ID for O(1) lookup
+    if (obj[idKey]) {
+      this._indexMap[obj[idKey]] = obj._rowIndex;
+    }
   }
+  this._cache = list;
   return list;
 };
 
 BaseRepository.prototype.findById = function(idField, idValue) {
+  var idKey = App.Constants.SHEET_HEADERS[this.sheetName][0];
+  if (idField === idKey && this._indexMap && this._indexMap[idValue]) {
+    return this.getAll()[this._indexMap[idValue] - 2]; // O(1) via index map
+  }
   return this.getAll().find(function(r) { return r[idField] == idValue; });
 };
 
@@ -52,26 +67,56 @@ BaseRepository.prototype.findBy = function(filterFn) {
   return this.getAll().filter(filterFn);
 };
 
-BaseRepository.prototype.add = function(dataArray) {
+BaseRepository.prototype.findMany = function(idField, idValues) {
+  var vals = Array.isArray(idValues) ? idValues : [idValues];
+  return this.getAll().filter(function(r) { return vals.indexOf(r[idField]) !== -1; });
+};
+
+BaseRepository.prototype.add = function(dataMap) {
   var sheet = this.getSheet();
-  sheet.appendRow(dataArray);
+  var headers = App.Constants.SHEET_HEADERS[this.sheetName];
+  var row = new Array(headers.length).fill("");
+
+  for (var key in dataMap) {
+    var index = headers.indexOf(key);
+    if (index >= 0) {
+      row[index] = dataMap[key];
+    }
+  }
+
+  sheet.appendRow(row);
+  this._clearCache();
   SpreadsheetApp.flush();
 };
 
 BaseRepository.prototype.updateRow = function(rowIndex, dataMap) {
+  this.updateRows([{ rowIndex: rowIndex, data: dataMap }]);
+};
+
+BaseRepository.prototype.updateRows = function(updateConfigs) {
+  if (!updateConfigs || updateConfigs.length === 0) return;
+
   var sheet = this.getSheet();
   var headers = App.Constants.SHEET_HEADERS[this.sheetName];
-  var rowValues = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+  var self = this;
 
-  for (var key in dataMap) {
-    var colIndex = headers.indexOf(key);
-    if (colIndex >= 0) {
-      rowValues[colIndex] = dataMap[key];
+  updateConfigs.forEach(function(config) {
+    var rowValues = sheet.getRange(config.rowIndex, 1, 1, headers.length).getValues()[0];
+    for (var key in config.data) {
+      var colIndex = headers.indexOf(key);
+      if (colIndex >= 0) {
+        rowValues[colIndex] = config.data[key];
+      }
     }
-  }
+    sheet.getRange(config.rowIndex, 1, 1, headers.length).setValues([rowValues]);
+  });
 
-  sheet.getRange(rowIndex, 1, 1, headers.length).setValues([rowValues]);
+  this._clearCache();
   SpreadsheetApp.flush();
+};
+
+BaseRepository.prototype._clearCache = function() {
+  this._cache = null;
 };
 
 /**
@@ -116,6 +161,19 @@ ProductRepository.prototype.incrementStock = function(productId, quantity) {
     var current = parseInt(p.stock || 0, 10);
     this.updateRow(p._rowIndex, { stock: current + quantity });
   }
+};
+
+ProductRepository.prototype.adjustStockBatch = function(adjustments) {
+  var self = this;
+  var updateConfigs = adjustments.map(function(adj) {
+    var product = self.findByProductId(adj.productId);
+    if (!product) throw new Error("Product not found: " + adj.productId);
+    var current = parseInt(product.stock || 0, 10);
+    var nextStock = current + adj.delta;
+    if (nextStock < 0) throw new Error("Insufficient stock for " + product.title);
+    return { rowIndex: product._rowIndex, data: { stock: nextStock } };
+  });
+  this.updateRows(updateConfigs);
 };
 
 var CategoryRepository = function() { BaseRepository.call(this, "categories"); };
