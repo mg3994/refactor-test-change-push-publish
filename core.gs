@@ -230,6 +230,7 @@ var App = App || {};
         var type = typeof rule === 'string' ? rule : rule.type;
 
         if (val === undefined || val === null || val === "") {
+          if (rule && rule.optional) return;
           throw new App.ValidationError("Missing required field: " + field);
         }
 

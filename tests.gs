@@ -27,7 +27,8 @@ function runTests() {
     testRefundLogic,
     testStatusUpdate,
     testStatusMachine,
-    testAutoTimestamp
+    testAutoTimestamp,
+    testGetOrdersEnrichment
   ];
 
   var results = [];
@@ -413,5 +414,27 @@ function testAutoTimestamp() {
   } finally {
     repo.getSheet = originalGetSheet;
     repo._clearCache();
+  }
+}
+
+function testGetOrdersEnrichment() {
+  var mockOrder = { order_id: "ORD-99", firebase_uid: "user123", product_details: JSON.stringify([{ product_id: "P1", quantity: 1 }, { product_id: "P2", quantity: 1 }]), total_amount: 100, status: "PENDING" };
+  var mockProduct = { product_id: "P1", title: "Product 1", image_url: "img1.png", price: 50 };
+
+  var originalFindByUid = App.Repositories.Orders.findByUid;
+  var originalFindById = App.Repositories.Products.findByProductId;
+
+  App.Repositories.Orders.findByUid = function() { return [mockOrder]; };
+  App.Repositories.Products.findByProductId = function() { return mockProduct; };
+
+  try {
+    var res = App.UseCases.getOrders.execute({ user: { uid: "user123" } });
+    var o = res.orders[0];
+    if (o.item_count !== 2) throw new Error("Item count failed");
+    if (o.summary_title !== "Product 1 & 1 more") throw new Error("Summary title failed: " + o.summary_title);
+    if (o.summary_image !== "img1.png") throw new Error("Summary image failed");
+  } finally {
+    App.Repositories.Orders.findByUid = originalFindByUid;
+    App.Repositories.Products.findByProductId = originalFindById;
   }
 }

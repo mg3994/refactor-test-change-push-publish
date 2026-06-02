@@ -88,6 +88,17 @@ BaseRepository.prototype.findMany = function(idField, idValues) {
   return this.getAll().filter(function(r) { return vals.indexOf(r[idField]) !== -1; });
 };
 
+BaseRepository.prototype.upsert = function(idField, dataMap) {
+  var existing = this.findById(idField, dataMap[idField]);
+  if (existing) {
+    this.updateRow(existing._rowIndex, dataMap);
+    return existing._rowIndex;
+  } else {
+    this.add(dataMap);
+    return this.getSheet().getLastRow();
+  }
+};
+
 BaseRepository.prototype.add = function(dataMap) {
   var sheet = this.getSheet();
   var headers = App.Constants.SHEET_HEADERS[this.sheetName];

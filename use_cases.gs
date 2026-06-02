@@ -192,12 +192,25 @@ CancelOrderUseCase.prototype.execute = function(payload) {
   });
 };
 
-var GetOrdersUseCase = function(orderRepo, utils) {
-  this.orderRepo = orderRepo; this.utils = utils;
+var GetOrdersUseCase = function(orderRepo, productRepo, utils) {
+  this.orderRepo = orderRepo; this.productRepo = productRepo; this.utils = utils;
 };
 GetOrdersUseCase.prototype.execute = function(payload) {
   var all = this.orderRepo.findByUid(payload.user.uid);
   all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
+
+  // Enrich for list view summary
+  var self = this;
+  all.forEach(function(o) {
+    var items = JSON.parse(o.product_details || "[]");
+    o.item_count = items.length;
+    if (items.length > 0) {
+      var first = self.productRepo.findByProductId(items[0].product_id);
+      o.summary_image = first ? first.image_url : "";
+      o.summary_title = first ? (first.title + (items.length > 1 ? " & " + (items.length - 1) + " more" : "")) : "Order Items";
+    }
+  });
+
   var res = this.utils.paginate(all, payload.page, payload.limit);
   return { orders: res.items, pagination: res.pagination };
 };
@@ -237,6 +250,19 @@ GetProductsUseCase.prototype.execute = function(payload) {
     all = all.filter(function(p) { return p.category_ids && String(p.category_ids).split(",").indexOf(String(payload.categoryId)) !== -1; });
   }
 
+  // Advanced Filters
+  if (payload.minPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) >= parseFloat(payload.minPrice); });
+  if (payload.maxPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) <= parseFloat(payload.maxPrice); });
+
+  // Sorting
+  if (payload.sortBy === "price_asc") {
+    all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
+  } else if (payload.sortBy === "price_desc") {
+    all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
+  } else if (payload.sortBy === "newest") {
+    all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
+  }
+
   // Aggregate Ratings
   all.forEach(function(p) {
     var reviews = self.reviewRepo.findByProductId(p.product_id);
@@ -245,6 +271,11 @@ GetProductsUseCase.prototype.execute = function(payload) {
     p.averageRating = parseFloat(avg.toFixed(1));
     p.reviewCount = count;
   });
+
+  // Sort by Rating (Must happen after aggregation)
+  if (payload.sortBy === "rating_desc") {
+    all.sort(function(a, b) { return b.averageRating - a.averageRating; });
+  }
 
   var result = this.utils.paginate(all, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
@@ -262,6 +293,45 @@ AddReviewUseCase.prototype.execute = function(payload) {
     star_rating: payload.starRating
   });
   return { reviewed: true };
+};
+
+var GetCartPreviewUseCase = function(productRepo, utils) {
+  this.productRepo = productRepo;
+  this.utils = utils;
+};
+GetCartPreviewUseCase.prototype.execute = function(payload) {
+  var items = payload.items || [];
+  var products = [];
+  var subtotal = 0;
+  var self = this;
+
+  items.forEach(function(item) {
+    var p = self.productRepo.findByProductId(item.product_id);
+    if (!p) throw new App.AppError("Product not found: " + item.product_id, 404);
+
+    var stock = parseInt(p.stock || 0, 10);
+    var preview = {
+      product_id: p.product_id,
+      title: p.title,
+      price: parseFloat(p.price || 0),
+      image_url: p.image_url,
+      requested_quantity: item.quantity,
+      available_stock: stock,
+      is_available: stock >= item.quantity
+    };
+
+    products.push(preview);
+    if (preview.is_available) {
+      subtotal += preview.price * item.quantity;
+    }
+  });
+
+  return {
+    items: products,
+    subtotal: subtotal,
+    travel_fee: parseFloat(payload.travelFee || 0),
+    total: subtotal + parseFloat(payload.travelFee || 0)
+  };
 };
 
 var GetReviewsUseCase = function(reviewRepo, orderRepo, utils) {
@@ -308,11 +378,17 @@ SearchProductsUseCase.prototype.execute = function(payload) {
     all = all.filter(function(p) { return parseInt(p.stock || 0, 10) > 0; });
   }
 
+  // Advanced Filters
+  if (payload.minPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) >= parseFloat(payload.minPrice); });
+  if (payload.maxPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) <= parseFloat(payload.maxPrice); });
+
   // Sorting
   if (payload.sortBy === "price_asc") {
     all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
   } else if (payload.sortBy === "price_desc") {
     all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
+  } else if (payload.sortBy === "newest") {
+    all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
   }
 
   // Aggregate Ratings
@@ -323,6 +399,11 @@ SearchProductsUseCase.prototype.execute = function(payload) {
     p.averageRating = parseFloat(avg.toFixed(1));
     p.reviewCount = count;
   });
+
+  // Sort by Rating (Must happen after aggregation)
+  if (payload.sortBy === "rating_desc") {
+    all.sort(function(a, b) { return b.averageRating - a.averageRating; });
+  }
 
   var result = this.utils.paginate(all, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };

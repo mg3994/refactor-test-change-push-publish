@@ -33,14 +33,28 @@ var AppController = (function() {
       shippingPhone: { type: "string", pattern: phonePat }
     }];
     registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], { idToken: "string", orderId: "string" }];
-    registry[a.GET_PRODUCTS] = [u.getProducts, [], {}];
+    registry[a.GET_PRODUCTS] = [u.getProducts, [], {
+      categoryId: { type: "string", optional: true },
+      minPrice: { type: "number", optional: true },
+      maxPrice: { type: "number", optional: true },
+      sortBy: { type: "string", optional: true }
+    }];
     registry[a.GET_CATEGORIES] = [u.getCategories, [], {}];
     registry[a.ADD_REVIEW] = [u.addReview, [auth], { idToken: "string", productId: "string", reviewText: "string", starRating: "number" }];
     registry[a.GET_REVIEWS] = [u.getReviews, [], { productId: "string" }];
     registry[a.PROCESS_PAYMENT] = [u.processPayment, [auth], { idToken: "string", orderId: "string", amount: "number" }];
-    registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], {}];
+    registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], {
+      query: { type: "string", optional: true },
+      inStockOnly: { type: "string", optional: true },
+      minPrice: { type: "number", optional: true },
+      maxPrice: { type: "number", optional: true },
+      sortBy: { type: "string", optional: true }
+    }];
     registry[a.GET_ORDERS] = [u.getOrders, [auth], { idToken: "string" }];
     registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], { idToken: "string", orderId: "string" }];
+    registry[a.GET_CART_PREVIEW] = [u.getCartPreview, [], {
+      items: { type: "array", items: { product_id: "string", quantity: "number" } }
+    }];
     registry[a.REFUND_PAYMENT] = [u.refundPayment, [auth], { idToken: "string", paymentId: "string" }];
     registry[a.UPDATE_ORDER_STATUS] = [u.updateOrderStatus, [auth], { idToken: "string", orderId: "string", status: "string" }];
   }
