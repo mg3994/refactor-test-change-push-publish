@@ -15,7 +15,9 @@ function runTests() {
     testEventDispatcher,
     testOrderHistory,
     testAuditLogging,
-    testPaymentReconciliation
+    testPaymentReconciliation,
+    testTypeSafeValidation,
+    testServerSidePriceCalculation
   ];
 
   var results = [];
@@ -186,5 +188,39 @@ function testPaymentReconciliation() {
   } finally {
     App.Repositories.Orders.findByOrderId = originalFind;
     App.Repositories.Orders.updateRow = originalUpdate;
+  }
+}
+
+function testTypeSafeValidation() {
+  var schema = { a: "string", b: "number", c: "array" };
+  try {
+    App.Utils.validate({ a: "s", b: 1, c: [] }, schema);
+  } catch (e) {
+    throw new Error("Should have passed validation: " + e);
+  }
+
+  try {
+    App.Utils.validate({ a: 1, b: 1, c: [] }, schema);
+    throw new Error("Should have failed string type check");
+  } catch (e) {
+    if (e.message.indexOf("must be a string") === -1) throw e;
+  }
+}
+
+function testServerSidePriceCalculation() {
+  var originalFind = App.Repositories.Products.findByProductId;
+  App.Repositories.Products.findByProductId = function() {
+    return { _rowIndex: 2, price: 50, stock: 10, title: "T" };
+  };
+
+  try {
+    var res = App.UseCases.createOrder.execute({
+      user: { uid: "u1" },
+      products: [{ product_id: "P1", quantity: 2 }],
+      travelFee: 10
+    });
+    if (res.totalCalculated !== 110) throw new Error("Price calculation incorrect: " + res.totalCalculated);
+  } finally {
+    App.Repositories.Products.findByProductId = originalFind;
   }
 }

@@ -14,26 +14,26 @@ var AppController = (function() {
     // Registry: [UseCaseInstance, LocalMiddlewares, ValidationSchema]
     var auth = App.Middleware.Auth;
 
-    registry[a.VERIFY_TOKEN] = [u.verifyToken, [auth], ["idToken"]];
-    registry[a.SYNC_DEVICE] = [u.syncDevice, [auth], ["idToken", "clientId"]];
-    registry[a.LOGOUT_DEVICE] = [u.logoutDevice, [], ["clientId"]];
-    registry[a.GET_NOTIFICATIONS] = [u.getNotifications, [auth], ["idToken"]];
-    registry[a.SEND_NOTIFICATION] = [u.sendNotification, [], ["tokens", "title", "body"]];
-    registry[a.BROADCAST_NOTIFICATION] = [u.broadcastNotification, [], ["title", "body"]];
-    registry[a.VERIFY_LOGISTICS] = [u.verifyLogistics, [], []];
-    registry[a.GET_PLACE_SUGGESTIONS] = [u.getPlaceSuggestions, [], ["inputToken"]];
-    registry[a.PROCESS_LOCATION_METRICS] = [u.processLocationMetrics, [], ["originLat", "originLng", "destinationQuery"]];
-    registry[a.PROCESS_PIN_DROP_METRICS] = [u.processPinDropMetrics, [], ["originLat", "originLng", "pinLat", "pinLng"]];
-    registry[a.CREATE_ORDER] = [u.createOrder, [auth], ["idToken", "products", "totalAmount"]];
-    registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], ["idToken", "orderId"]];
-    registry[a.GET_PRODUCTS] = [u.getProducts, [], []];
-    registry[a.GET_CATEGORIES] = [u.getCategories, [], []];
-    registry[a.ADD_REVIEW] = [u.addReview, [auth], ["idToken", "productId", "reviewText", "starRating"]];
-    registry[a.GET_REVIEWS] = [u.getReviews, [], ["productId"]];
-    registry[a.PROCESS_PAYMENT] = [u.processPayment, [auth], ["idToken", "orderId", "amount"]];
-    registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], []];
-    registry[a.GET_ORDERS] = [u.getOrders, [auth], ["idToken"]];
-    registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], ["idToken", "orderId"]];
+    registry[a.VERIFY_TOKEN] = [u.verifyToken, [auth], { idToken: "string" }];
+    registry[a.SYNC_DEVICE] = [u.syncDevice, [auth], { idToken: "string", clientId: "string" }];
+    registry[a.LOGOUT_DEVICE] = [u.logoutDevice, [], { clientId: "string" }];
+    registry[a.GET_NOTIFICATIONS] = [u.getNotifications, [auth], { idToken: "string" }];
+    registry[a.SEND_NOTIFICATION] = [u.sendNotification, [], { tokens: "array", title: "string", body: "string" }];
+    registry[a.BROADCAST_NOTIFICATION] = [u.broadcastNotification, [], { title: "string", body: "string" }];
+    registry[a.VERIFY_LOGISTICS] = [u.verifyLogistics, [], {}];
+    registry[a.GET_PLACE_SUGGESTIONS] = [u.getPlaceSuggestions, [], { inputToken: "string" }];
+    registry[a.PROCESS_LOCATION_METRICS] = [u.processLocationMetrics, [], { originLat: "number", originLng: "number", destinationQuery: "string" }];
+    registry[a.PROCESS_PIN_DROP_METRICS] = [u.processPinDropMetrics, [], { originLat: "number", originLng: "number", pinLat: "number", pinLng: "number" }];
+    registry[a.CREATE_ORDER] = [u.createOrder, [auth], { idToken: "string", products: "array" }];
+    registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], { idToken: "string", orderId: "string" }];
+    registry[a.GET_PRODUCTS] = [u.getProducts, [], {}];
+    registry[a.GET_CATEGORIES] = [u.getCategories, [], {}];
+    registry[a.ADD_REVIEW] = [u.addReview, [auth], { idToken: "string", productId: "string", reviewText: "string", starRating: "number" }];
+    registry[a.GET_REVIEWS] = [u.getReviews, [], { productId: "string" }];
+    registry[a.PROCESS_PAYMENT] = [u.processPayment, [auth], { idToken: "string", orderId: "string", amount: "number" }];
+    registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], {}];
+    registry[a.GET_ORDERS] = [u.getOrders, [auth], { idToken: "string" }];
+    registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], { idToken: "string", orderId: "string" }];
   }
 
   function runPipeline(middlewares, payload, finalTask) {

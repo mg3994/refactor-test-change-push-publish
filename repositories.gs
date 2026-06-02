@@ -61,12 +61,16 @@ BaseRepository.prototype.add = function(dataArray) {
 BaseRepository.prototype.updateRow = function(rowIndex, dataMap) {
   var sheet = this.getSheet();
   var headers = App.Constants.SHEET_HEADERS[this.sheetName];
+  var rowValues = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
+
   for (var key in dataMap) {
-    var colIndex = headers.indexOf(key) + 1;
-    if (colIndex > 0) {
-      sheet.getRange(rowIndex, colIndex).setValue(dataMap[key]);
+    var colIndex = headers.indexOf(key);
+    if (colIndex >= 0) {
+      rowValues[colIndex] = dataMap[key];
     }
   }
+
+  sheet.getRange(rowIndex, 1, 1, headers.length).setValues([rowValues]);
   SpreadsheetApp.flush();
 };
 

@@ -186,10 +186,28 @@ var App = App || {};
       };
     },
 
-    validate: function(payload, requiredFields) {
-      requiredFields.forEach(function(field) {
-        if (!payload[field]) throw new App.ValidationError("Missing required field: " + field);
-      });
+    validate: function(payload, schema) {
+      // schema can be array of strings (backwards compatibility) or object { field: type }
+      if (Array.isArray(schema)) {
+        schema.forEach(function(field) {
+          if (!payload[field]) throw new App.ValidationError("Missing required field: " + field);
+        });
+      } else {
+        Object.keys(schema).forEach(function(field) {
+          var expectedType = schema[field];
+          var val = payload[field];
+
+          if (val === undefined || val === null || val === "") {
+            throw new App.ValidationError("Missing required field: " + field);
+          }
+
+          if (expectedType === "array" && !Array.isArray(val)) {
+            throw new App.ValidationError("Field " + field + " must be an array");
+          } else if (expectedType !== "array" && typeof val !== expectedType) {
+            throw new App.ValidationError("Field " + field + " must be a " + expectedType);
+          }
+        });
+      }
     }
   };
 

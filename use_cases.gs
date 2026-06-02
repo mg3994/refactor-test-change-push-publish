@@ -126,16 +126,42 @@ CreateOrderUseCase.prototype.execute = function(payload) {
   var self = this;
   return this.utils.withLock(function() {
     var items = payload.products || [];
+    var totalAmount = 0;
+
     items.forEach(function(item) {
+      var product = self.productRepo.findByProductId(item.product_id);
+      if (!product) throw new App.AppError("Product not found: " + item.product_id, 404);
+
+      // Server-side total calculation to prevent manipulation
+      totalAmount += parseFloat(product.price || 0) * parseInt(item.quantity, 10);
+
       self.productRepo.decrementStock(item.product_id, item.quantity);
     });
+
+    // Add travel fee if applicable
+    var finalAmount = totalAmount + parseFloat(payload.travelFee || 0);
+
     var id = self.utils.generateId("ORD");
     var now = new Date().toISOString();
-    self.orderRepo.add([id, payload.user.uid, JSON.stringify(items), payload.totalAmount, payload.travelFee || 0, "PENDING", payload.shippingPhone, payload.fullAddress, payload.latitude, payload.longitude, payload.customerNote || "", now, now]);
+    self.orderRepo.add([
+      id,
+      payload.user.uid,
+      JSON.stringify(items),
+      finalAmount,
+      payload.travelFee || 0,
+      "PENDING",
+      payload.shippingPhone,
+      payload.fullAddress,
+      payload.latitude,
+      payload.longitude,
+      payload.customerNote || "",
+      now,
+      now
+    ]);
 
-    App.EventDispatcher.dispatch("ORDER_CREATED", { orderId: id, uid: payload.user.uid, amount: payload.totalAmount });
+    App.EventDispatcher.dispatch("ORDER_CREATED", { orderId: id, uid: payload.user.uid, amount: finalAmount });
 
-    return { orderId: id, status: "PENDING" };
+    return { orderId: id, status: "PENDING", totalCalculated: finalAmount };
   });
 };
 
