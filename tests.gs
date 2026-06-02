@@ -11,7 +11,11 @@ function runTests() {
     testGooglePayProcessing,
     testInventoryManagement,
     testProductSearch,
-    testUnauthorizedAccess
+    testUnauthorizedAccess,
+    testEventDispatcher,
+    testOrderHistory,
+    testAuditLogging,
+    testPaymentReconciliation
   ];
 
   var results = [];
@@ -130,5 +134,57 @@ function testUnauthorizedAccess() {
     if (content.status !== 401) throw new Error("Expected 401, got " + content.status);
   } finally {
     App.Services.Auth.verifyToken = originalVerify;
+  }
+}
+
+function testEventDispatcher() {
+  var called = false;
+  App.EventDispatcher.on("TEST_EVENT", function(data) {
+    if (data.msg === "hello") called = true;
+  });
+  App.EventDispatcher.dispatch("TEST_EVENT", { msg: "hello" });
+  if (!called) throw new Error("Event dispatcher failed");
+}
+
+function testOrderHistory() {
+  var originalFindByUid = App.Repositories.Orders.findByUid;
+  App.Repositories.Orders.findByUid = function() {
+    return [{ order_id: "O1", created_at: "2023-01-01" }];
+  };
+  try {
+    var res = App.UseCases.getOrders.execute({ user: { uid: "u1" } });
+    if (res.orders.length !== 1) throw new Error("Order history failed");
+  } finally {
+    App.Repositories.Orders.findByUid = originalFindByUid;
+  }
+}
+
+function testAuditLogging() {
+  var lastLog = null;
+  var originalAdd = App.Repositories.Logs.add;
+  App.Repositories.Logs.add = function(data) { lastLog = data; };
+
+  try {
+    AppController.handleRequest({ postData: { contents: JSON.stringify({ action: "GET_CATEGORIES" }) } });
+    if (!lastLog || lastLog[1] !== "GET_CATEGORIES") throw new Error("Audit log missing or incorrect");
+  } finally {
+    App.Repositories.Logs.add = originalAdd;
+  }
+}
+
+function testPaymentReconciliation() {
+  var updatedStatus = "";
+  var originalFind = App.Repositories.Orders.findByOrderId;
+  var originalUpdate = App.Repositories.Orders.updateRow;
+
+  App.Repositories.Orders.findByOrderId = function() { return { _rowIndex: 2, status: "PENDING" }; };
+  App.Repositories.Orders.updateRow = function(idx, data) { updatedStatus = data.status; };
+
+  try {
+    App.EventDispatcher.dispatch("PAYMENT_COMPLETED", { orderId: "O1" });
+    if (updatedStatus !== "PAID") throw new Error("Reconciliation failed: " + updatedStatus);
+  } finally {
+    App.Repositories.Orders.findByOrderId = originalFind;
+    App.Repositories.Orders.updateRow = originalUpdate;
   }
 }

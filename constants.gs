@@ -1,5 +1,6 @@
 var ORDER_STATUS = {
   PENDING: "PENDING",
+  PAID: "PAID",
   CANCELLED: "CANCELLED",
   DELIVERED: "DELIVERED",
 };
@@ -37,6 +38,8 @@ var ACTIONS = {
   GET_REVIEWS: "GET_REVIEWS",
   PROCESS_PAYMENT: "PROCESS_PAYMENT",
   SEARCH_PRODUCTS: "SEARCH_PRODUCTS",
+  GET_ORDERS: "GET_ORDERS",
+  GET_ORDER_DETAILS: "GET_ORDER_DETAILS",
 };
 
 var SHEET_HEADERS = {
@@ -104,5 +107,12 @@ var SHEET_HEADERS = {
     "click_url",
     "status",
     "created_at",
+  ],
+  logs: [
+    "timestamp",
+    "action",
+    "firebase_uid",
+    "status",
+    "details"
   ],
 };

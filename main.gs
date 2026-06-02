@@ -14,7 +14,7 @@ var AppController = (function() {
     // Registry: [UseCaseInstance, LocalMiddlewares, ValidationSchema]
     var auth = App.Middleware.Auth;
 
-    registry[a.VERIFY_TOKEN] = [u.verifyToken, [], ["idToken"]];
+    registry[a.VERIFY_TOKEN] = [u.verifyToken, [auth], ["idToken"]];
     registry[a.SYNC_DEVICE] = [u.syncDevice, [auth], ["idToken", "clientId"]];
     registry[a.LOGOUT_DEVICE] = [u.logoutDevice, [], ["clientId"]];
     registry[a.GET_NOTIFICATIONS] = [u.getNotifications, [auth], ["idToken"]];
@@ -32,6 +32,8 @@ var AppController = (function() {
     registry[a.GET_REVIEWS] = [u.getReviews, [], ["productId"]];
     registry[a.PROCESS_PAYMENT] = [u.processPayment, [auth], ["idToken", "orderId", "amount"]];
     registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], []];
+    registry[a.GET_ORDERS] = [u.getOrders, [auth], ["idToken"]];
+    registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], ["idToken", "orderId"]];
   }
 
   function runPipeline(middlewares, payload, finalTask) {

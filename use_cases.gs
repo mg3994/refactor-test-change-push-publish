@@ -132,6 +132,9 @@ CreateOrderUseCase.prototype.execute = function(payload) {
     var id = self.utils.generateId("ORD");
     var now = new Date().toISOString();
     self.orderRepo.add([id, payload.user.uid, JSON.stringify(items), payload.totalAmount, payload.travelFee || 0, "PENDING", payload.shippingPhone, payload.fullAddress, payload.latitude, payload.longitude, payload.customerNote || "", now, now]);
+
+    App.EventDispatcher.dispatch("ORDER_CREATED", { orderId: id, uid: payload.user.uid, amount: payload.totalAmount });
+
     return { orderId: id, status: "PENDING" };
   });
 };
@@ -151,6 +154,25 @@ CancelOrderUseCase.prototype.execute = function(payload) {
     self.orderRepo.updateRow(o._rowIndex, { status: "CANCELLED", updated_at: new Date().toISOString() });
     return { cancelled: true };
   });
+};
+
+var GetOrdersUseCase = function(orderRepo, utils) {
+  this.orderRepo = orderRepo; this.utils = utils;
+};
+GetOrdersUseCase.prototype.execute = function(payload) {
+  var all = this.orderRepo.findByUid(payload.user.uid);
+  all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
+  var res = this.utils.paginate(all, payload.page, payload.limit);
+  return { orders: res.items, pagination: res.pagination };
+};
+
+var GetOrderDetailsUseCase = function(orderRepo) {
+  this.orderRepo = orderRepo;
+};
+GetOrderDetailsUseCase.prototype.execute = function(payload) {
+  var o = this.orderRepo.findByOrderId(payload.orderId);
+  if (!o || o.firebase_uid !== payload.user.uid) throw new App.AppError("Order not found", 404);
+  return { order: o };
 };
 
 var GetProductsUseCase = function(productRepo, utils) { this.productRepo = productRepo; this.utils = utils; };
@@ -179,7 +201,27 @@ var SearchProductsUseCase = function(productRepo, utils) { this.productRepo = pr
 SearchProductsUseCase.prototype.execute = function(payload) {
   var q = (payload.query || "").toLowerCase();
   var all = this.productRepo.getAll();
-  if (q) all = all.filter(function(p) { return (p.title || "").toLowerCase().indexOf(q) !== -1 || (p.description || "").toLowerCase().indexOf(q) !== -1; });
+
+  // Search Filtering
+  if (q) {
+    all = all.filter(function(p) {
+      return (p.title || "").toLowerCase().indexOf(q) !== -1 ||
+             (p.description || "").toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  // Stock Filtering
+  if (payload.inStockOnly === "true") {
+    all = all.filter(function(p) { return parseInt(p.stock || 0, 10) > 0; });
+  }
+
+  // Sorting
+  if (payload.sortBy === "price_asc") {
+    all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
+  } else if (payload.sortBy === "price_desc") {
+    all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
+  }
+
   var result = this.utils.paginate(all, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
 };
@@ -210,12 +252,32 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
     JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
     new Date().toISOString()
   ]);
+
+  App.EventDispatcher.dispatch("PAYMENT_COMPLETED", { paymentId: id, orderId: payload.orderId, uid: payload.user.uid, amount: payload.amount });
+
   return { paymentId: id, status: "SUCCESS", method: method };
 };
 
 // Application Assembly
 (function() {
   var s = App.Services, r = App.Repositories, u = App.Utils, c = App.Config;
+
+  // Event Subscriptions
+  App.EventDispatcher.on("ORDER_CREATED", function(data) {
+    var sessions = r.Sessions.getAll().filter(function(s) { return s.firebase_uid === data.uid && s.fcm_token; });
+    var tokens = sessions.map(function(s) { return s.fcm_token; });
+    if (tokens.length > 0) {
+      s.Messaging.sendMulticast(tokens, "Order Placed!", "Your order " + data.orderId + " has been created.", { orderId: data.orderId });
+    }
+  });
+
+  App.EventDispatcher.on("PAYMENT_COMPLETED", function(data) {
+    var order = r.Orders.findByOrderId(data.orderId);
+    if (order && order.status === App.Constants.ORDER_STATUS.PENDING) {
+      r.Orders.updateRow(order._rowIndex, { status: App.Constants.ORDER_STATUS.PAID, updated_at: new Date().toISOString() });
+    }
+  });
+
   App.UseCases = {
     verifyToken: new VerifyTokenUseCase(),
     syncDevice: new SyncDeviceUseCase(r.Sessions, u),
@@ -229,6 +291,8 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
     processPinDropMetrics: new ProcessPinDropMetricsUseCase(s.Location),
     createOrder: new CreateOrderUseCase(r.Products, r.Orders, u),
     cancelOrder: new CancelOrderUseCase(r.Products, r.Orders, u),
+    getOrders: new GetOrdersUseCase(r.Orders, u),
+    getOrderDetails: new GetOrderDetailsUseCase(r.Orders),
     getProducts: new GetProductsUseCase(r.Products, u),
     getCategories: new GetCategoriesUseCase(r.Categories),
     addReview: new AddReviewUseCase(r.Reviews),

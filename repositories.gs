@@ -89,6 +89,9 @@ var OrderRepository = function() { BaseRepository.call(this, "orders"); };
 OrderRepository.prototype = Object.create(BaseRepository.prototype);
 OrderRepository.prototype.constructor = OrderRepository;
 OrderRepository.prototype.findByOrderId = function(id) { return this.findById("order_id", id); };
+OrderRepository.prototype.findByUid = function(uid) {
+  return this.findBy(function(r) { return String(r.firebase_uid) === String(uid); });
+};
 
 var ProductRepository = function() { BaseRepository.call(this, "products"); };
 ProductRepository.prototype = Object.create(BaseRepository.prototype);
@@ -126,6 +129,10 @@ var PaymentRepository = function() { BaseRepository.call(this, "payments"); };
 PaymentRepository.prototype = Object.create(BaseRepository.prototype);
 PaymentRepository.prototype.constructor = PaymentRepository;
 
+var LogRepository = function() { BaseRepository.call(this, "logs"); };
+LogRepository.prototype = Object.create(BaseRepository.prototype);
+LogRepository.prototype.constructor = LogRepository;
+
 // Initialize repositories
 (function() {
   App.Repositories = {
@@ -135,6 +142,7 @@ PaymentRepository.prototype.constructor = PaymentRepository;
     Products: new ProductRepository(),
     Categories: new CategoryRepository(),
     Reviews: new ReviewRepository(),
-    Payments: new PaymentRepository()
+    Payments: new PaymentRepository(),
+    Logs: new LogRepository()
   };
 })();

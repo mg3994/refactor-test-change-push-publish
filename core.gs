@@ -31,10 +31,32 @@ var App = App || {};
    */
   App.Middleware = {
     Log: function(payload, next) {
-      Logger.log("Incoming Action: " + payload.action);
-      var res = next();
-      Logger.log("Action Complete: " + payload.action);
-      return res;
+      var startTime = Date.now();
+      var status = "SUCCESS";
+      var details = "";
+      var result;
+
+      try {
+        result = next();
+        return result;
+      } catch (e) {
+        status = "ERROR";
+        details = e.message || e.toString();
+        throw e;
+      } finally {
+        try {
+          var uid = (payload.user && payload.user.uid) ? payload.user.uid : (payload.idToken === "guest_session" ? "guest" : "anonymous");
+          App.Repositories.Logs.add([
+            new Date().toISOString(),
+            payload.action,
+            uid,
+            status,
+            details || "Duration: " + (Date.now() - startTime) + "ms"
+          ]);
+        } catch (logErr) {
+          Logger.log("Failed to persist log: " + logErr.toString());
+        }
+      }
     },
 
     Auth: function(payload, next) {
@@ -50,6 +72,29 @@ var App = App || {};
       return next();
     }
   };
+
+  /**
+   * Event Dispatcher (Simple Pub/Sub)
+   */
+  App.EventDispatcher = (function() {
+    var listeners = {};
+    return {
+      on: function(event, callback) {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(callback);
+      },
+      dispatch: function(event, data) {
+        if (!listeners[event]) return;
+        listeners[event].forEach(function(callback) {
+          try {
+            callback(data);
+          } catch (e) {
+            Logger.log("Event Error [" + event + "]: " + e.toString());
+          }
+        });
+      }
+    };
+  })();
 
   /**
    * Configuration Management
