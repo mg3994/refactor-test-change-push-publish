@@ -95,6 +95,22 @@ ProductRepository.prototype = Object.create(BaseRepository.prototype);
 ProductRepository.prototype.constructor = ProductRepository;
 ProductRepository.prototype.findByProductId = function(id) { return this.findById("product_id", id); };
 
+ProductRepository.prototype.decrementStock = function(productId, quantity) {
+  var p = this.findByProductId(productId);
+  if (!p) throw new Error("Product not found: " + productId);
+  var current = parseInt(p.stock || 0, 10);
+  if (current < quantity) throw new Error("Insufficient stock for " + p.title);
+  this.updateRow(p._rowIndex, { stock: current - quantity });
+};
+
+ProductRepository.prototype.incrementStock = function(productId, quantity) {
+  var p = this.findByProductId(productId);
+  if (p) {
+    var current = parseInt(p.stock || 0, 10);
+    this.updateRow(p._rowIndex, { stock: current + quantity });
+  }
+};
+
 var CategoryRepository = function() { BaseRepository.call(this, "categories"); };
 CategoryRepository.prototype = Object.create(BaseRepository.prototype);
 CategoryRepository.prototype.constructor = CategoryRepository;

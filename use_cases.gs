@@ -1,24 +1,18 @@
 /**
- * Use Cases for the Application (Refactored for Dependency Injection)
+ * Use Cases for the Application (Refactored to leverage Middleware)
  */
 
-var VerifyTokenUseCase = function(authService) {
-  this.authService = authService;
-};
+var VerifyTokenUseCase = function() {};
 VerifyTokenUseCase.prototype.execute = function(payload) {
-  var result = this.authService.verifyToken(payload.idToken);
-  if (!result.isValid) throw new Error(result.error);
-  return result;
+  return payload.user; // User info attached by Auth middleware
 };
 
-var SyncDeviceUseCase = function(authService, sessionRepo, utils) {
-  this.authService = authService;
+var SyncDeviceUseCase = function(sessionRepo, utils) {
   this.sessionRepo = sessionRepo;
   this.utils = utils;
 };
 SyncDeviceUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
-  var uid = auth.uid || "guest";
+  var uid = payload.user.uid || "guest";
   var self = this;
   return this.utils.withLock(function() {
     var exist = self.sessionRepo.findByClientId(payload.clientId);
@@ -37,7 +31,6 @@ var LogoutDeviceUseCase = function(sessionRepo, utils) {
   this.utils = utils;
 };
 LogoutDeviceUseCase.prototype.execute = function(payload) {
-  if (!payload.clientId) throw new Error("Client ID missing");
   var self = this;
   return this.utils.withLock(function() {
     var exist = self.sessionRepo.findByClientId(payload.clientId);
@@ -48,26 +41,19 @@ LogoutDeviceUseCase.prototype.execute = function(payload) {
   });
 };
 
-var GetNotificationsUseCase = function(authService, notificationRepo) {
-  this.authService = authService;
+var GetNotificationsUseCase = function(notificationRepo, utils) {
   this.notificationRepo = notificationRepo;
+  this.utils = utils;
 };
 GetNotificationsUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
-  if (!auth.isValid) throw new Error("Unauthorized");
-  var page = parseInt(payload.page || 1, 10);
-  var limit = parseInt(payload.limit || 10, 10);
-  var all = this.notificationRepo.findByUid(auth.uid);
+  var all = this.notificationRepo.findByUid(payload.user.uid);
   if (payload.status) {
     all = all.filter(function(r) { return String(r.status).toLowerCase() === String(payload.status).toLowerCase(); });
   }
   all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
-  var total = all.length;
-  var paginated = all.slice((page - 1) * limit, page * limit);
-  return {
-    notifications: paginated,
-    pagination: { total_records: total, total_pages: Math.ceil(total / limit), current_page: page, limit_per_page: limit }
-  };
+
+  var result = this.utils.paginate(all, payload.page, payload.limit);
+  return { notifications: result.items, pagination: result.pagination };
 };
 
 var SendNotificationUseCase = function(messagingService) {
@@ -133,61 +119,55 @@ ProcessPinDropMetricsUseCase.prototype.execute = function(payload) {
   return { status: "success", address: rev.formatted_address, lat: payload.pinLat, lng: payload.pinLng, distance: route.distance.text, duration: route.duration.text };
 };
 
-var CreateOrderUseCase = function(authService, productRepo, orderRepo, utils) {
-  this.authService = authService; this.productRepo = productRepo; this.orderRepo = orderRepo; this.utils = utils;
+var CreateOrderUseCase = function(productRepo, orderRepo, utils) {
+  this.productRepo = productRepo; this.orderRepo = orderRepo; this.utils = utils;
 };
 CreateOrderUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
-  if (!auth.isValid) throw new Error("Unauthorized");
   var self = this;
   return this.utils.withLock(function() {
     var items = payload.products || [];
     items.forEach(function(item) {
-      var p = self.productRepo.findByProductId(item.product_id);
-      if (!p || parseInt(p.stock, 10) < item.quantity) throw new Error("Insufficient stock for " + (p ? p.title : item.product_id));
-      self.productRepo.updateRow(p._rowIndex, { stock: parseInt(p.stock, 10) - item.quantity });
+      self.productRepo.decrementStock(item.product_id, item.quantity);
     });
     var id = self.utils.generateId("ORD");
     var now = new Date().toISOString();
-    self.orderRepo.add([id, auth.uid, JSON.stringify(items), payload.totalAmount, payload.travelFee || 0, "PENDING", payload.shippingPhone, payload.fullAddress, payload.latitude, payload.longitude, payload.customerNote || "", now, now]);
+    self.orderRepo.add([id, payload.user.uid, JSON.stringify(items), payload.totalAmount, payload.travelFee || 0, "PENDING", payload.shippingPhone, payload.fullAddress, payload.latitude, payload.longitude, payload.customerNote || "", now, now]);
     return { orderId: id, status: "PENDING" };
   });
 };
 
-var CancelOrderUseCase = function(authService, productRepo, orderRepo, utils) {
-  this.authService = authService; this.productRepo = productRepo; this.orderRepo = orderRepo; this.utils = utils;
+var CancelOrderUseCase = function(productRepo, orderRepo, utils) {
+  this.productRepo = productRepo; this.orderRepo = orderRepo; this.utils = utils;
 };
 CancelOrderUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
   var self = this;
   return this.utils.withLock(function() {
     var o = self.orderRepo.findByOrderId(payload.orderId);
-    if (!o || o.firebase_uid !== auth.uid) throw new Error("Order not found or permission denied");
-    if (o.status === "CANCELLED") throw new Error("Already cancelled");
+    if (!o || o.firebase_uid !== payload.user.uid) throw new App.AppError("Order not found or permission denied", 403);
+    if (o.status === "CANCELLED") throw new App.AppError("Already cancelled", 400);
     JSON.parse(o.product_details || "[]").forEach(function(item) {
-      var p = self.productRepo.findByProductId(item.product_id);
-      if (p) self.productRepo.updateRow(p._rowIndex, { stock: parseInt(p.stock, 10) + item.quantity });
+      self.productRepo.incrementStock(item.product_id, item.quantity);
     });
     self.orderRepo.updateRow(o._rowIndex, { status: "CANCELLED", updated_at: new Date().toISOString() });
     return { cancelled: true };
   });
 };
 
-var GetProductsUseCase = function(productRepo) { this.productRepo = productRepo; };
+var GetProductsUseCase = function(productRepo, utils) { this.productRepo = productRepo; this.utils = utils; };
 GetProductsUseCase.prototype.execute = function(payload) {
   var all = this.productRepo.getAll();
   if (payload.categoryId) {
-    all = all.filter(function(p) { return p.category_ids && p.category_ids.split(",").indexOf(payload.categoryId) !== -1; });
+    all = all.filter(function(p) { return p.category_ids && String(p.category_ids).split(",").indexOf(String(payload.categoryId)) !== -1; });
   }
-  return { products: all };
+  var result = this.utils.paginate(all, payload.page, payload.limit);
+  return { products: result.items, pagination: result.pagination };
 };
 
 var GetCategoriesUseCase = function(categoryRepo) { this.categoryRepo = categoryRepo; };
 GetCategoriesUseCase.prototype.execute = function() { return { categories: this.categoryRepo.getAll() }; };
 
-var AddReviewUseCase = function(authService, reviewRepo) { this.authService = authService; this.reviewRepo = reviewRepo; };
+var AddReviewUseCase = function(reviewRepo) { this.reviewRepo = reviewRepo; };
 AddReviewUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
   this.reviewRepo.add([payload.productId, payload.orderId || "", payload.reviewText, payload.starRating, new Date().toISOString()]);
   return { reviewed: true };
 };
@@ -195,26 +175,41 @@ AddReviewUseCase.prototype.execute = function(payload) {
 var GetReviewsUseCase = function(reviewRepo) { this.reviewRepo = reviewRepo; };
 GetReviewsUseCase.prototype.execute = function(payload) { return { reviews: this.reviewRepo.findByProductId(payload.productId) }; };
 
-var SearchProductsUseCase = function(productRepo) { this.productRepo = productRepo; };
+var SearchProductsUseCase = function(productRepo, utils) { this.productRepo = productRepo; this.utils = utils; };
 SearchProductsUseCase.prototype.execute = function(payload) {
   var q = (payload.query || "").toLowerCase();
   var all = this.productRepo.getAll();
   if (q) all = all.filter(function(p) { return (p.title || "").toLowerCase().indexOf(q) !== -1 || (p.description || "").toLowerCase().indexOf(q) !== -1; });
-  return { products: all };
+  var result = this.utils.paginate(all, payload.page, payload.limit);
+  return { products: result.items, pagination: result.pagination };
 };
 
-var ProcessPaymentUseCase = function(authService, paymentRepo, utils) {
-  this.authService = authService; this.paymentRepo = paymentRepo; this.utils = utils;
+var ProcessPaymentUseCase = function(paymentRepo, utils) {
+  this.paymentRepo = paymentRepo; this.utils = utils;
 };
 ProcessPaymentUseCase.prototype.execute = function(payload) {
-  var auth = this.authService.verifyToken(payload.idToken);
   var method = "UPI", desc = "Standard Transaction", ref = payload.transactionRef || "";
+  var pName = "", pEmail = "", pPhone = "";
+
   if (payload.googlePayResponse) {
-    var d = payload.googlePayResponse.details.paymentMethodData;
+    var g = payload.googlePayResponse;
+    var d = g.details.paymentMethodData;
     method = d.type; desc = d.description; ref = d.tokenizationData.token;
+    if (g.payer) {
+      pName = g.payer.name || "";
+      pEmail = g.payer.email || "";
+      pPhone = g.payer.phone || "";
+    }
   }
+
   var id = this.utils.generateId("PAY");
-  this.paymentRepo.add([id, ref, "", auth.uid, payload.orderId, payload.amount, "SUCCESS", method, desc, JSON.stringify(payload.googlePayResponse || payload.metadata || {}), new Date().toISOString()]);
+  // payment_id, transaction_ref, refund_ref, firebase_uid, order_id, amount, status, payment_method, payment_description, payer_name, payer_email, payer_phone, raw_metadata, created_at
+  this.paymentRepo.add([
+    id, ref, "", payload.user.uid, payload.orderId, payload.amount, "SUCCESS",
+    method, desc, pName, pEmail, pPhone,
+    JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
+    new Date().toISOString()
+  ]);
   return { paymentId: id, status: "SUCCESS", method: method };
 };
 
@@ -222,23 +217,23 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
 (function() {
   var s = App.Services, r = App.Repositories, u = App.Utils, c = App.Config;
   App.UseCases = {
-    verifyToken: new VerifyTokenUseCase(s.Auth),
-    syncDevice: new SyncDeviceUseCase(s.Auth, r.Sessions, u),
+    verifyToken: new VerifyTokenUseCase(),
+    syncDevice: new SyncDeviceUseCase(r.Sessions, u),
     logoutDevice: new LogoutDeviceUseCase(r.Sessions, u),
-    getNotifications: new GetNotificationsUseCase(s.Auth, r.Notifications),
+    getNotifications: new GetNotificationsUseCase(r.Notifications, u),
     sendNotification: new SendNotificationUseCase(s.Messaging),
     broadcastNotification: new BroadcastNotificationUseCase(s.Messaging),
     verifyLogistics: new VerifyLogisticsUseCase(s.Location, c),
     getPlaceSuggestions: new GetPlaceSuggestionsUseCase(s.Location),
     processLocationMetrics: new ProcessLocationMetricsUseCase(s.Location),
     processPinDropMetrics: new ProcessPinDropMetricsUseCase(s.Location),
-    createOrder: new CreateOrderUseCase(s.Auth, r.Products, r.Orders, u),
-    cancelOrder: new CancelOrderUseCase(s.Auth, r.Products, r.Orders, u),
-    getProducts: new GetProductsUseCase(r.Products),
+    createOrder: new CreateOrderUseCase(r.Products, r.Orders, u),
+    cancelOrder: new CancelOrderUseCase(r.Products, r.Orders, u),
+    getProducts: new GetProductsUseCase(r.Products, u),
     getCategories: new GetCategoriesUseCase(r.Categories),
-    addReview: new AddReviewUseCase(s.Auth, r.Reviews),
+    addReview: new AddReviewUseCase(r.Reviews),
     getReviews: new GetReviewsUseCase(r.Reviews),
-    searchProducts: new SearchProductsUseCase(r.Products),
-    processPayment: new ProcessPaymentUseCase(s.Auth, r.Payments, u)
+    searchProducts: new SearchProductsUseCase(r.Products, u),
+    processPayment: new ProcessPaymentUseCase(r.Payments, u)
   };
 })();

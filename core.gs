@@ -5,6 +5,53 @@ var App = App || {};
 
 (function() {
   /**
+   * Custom Error Types
+   */
+  App.AppError = function(message, status) {
+    this.message = message;
+    this.status = status || 500;
+    this.name = "AppError";
+  };
+  App.AppError.prototype = Object.create(Error.prototype);
+
+  App.ValidationError = function(message) {
+    App.AppError.call(this, message, 400);
+    this.name = "ValidationError";
+  };
+  App.ValidationError.prototype = Object.create(App.AppError.prototype);
+
+  App.AuthError = function(message) {
+    App.AppError.call(this, message || "Unauthorized", 401);
+    this.name = "AuthError";
+  };
+  App.AuthError.prototype = Object.create(App.AppError.prototype);
+
+  /**
+   * Middleware Implementation
+   */
+  App.Middleware = {
+    Log: function(payload, next) {
+      Logger.log("Incoming Action: " + payload.action);
+      var res = next();
+      Logger.log("Action Complete: " + payload.action);
+      return res;
+    },
+
+    Auth: function(payload, next) {
+      // Auth service is needed, but we can't easily inject it into a global static function
+      // without App.Services being initialized. Since this runs inside handleRequest
+      // where App.Services is ready, we use it directly.
+      var authResult = App.Services.Auth.verifyToken(payload.idToken);
+      if (payload.idToken !== "guest_session" && !authResult.isValid) {
+        throw new App.AuthError(authResult.error);
+      }
+      // Attach user info to payload
+      payload.user = authResult;
+      return next();
+    }
+  };
+
+  /**
    * Configuration Management
    */
   App.Config = (function() {
@@ -19,7 +66,7 @@ var App = App || {};
       MAX_SERVICE_RADIUS_KM: parseFloat(props.MAX_SERVICE_RADIUS_KM || "30"),
       TRAVEL_FEE_PER_KM: parseFloat(props.TRAVEL_FEE_PER_KM || "5"),
       TIMEZONE: props.TIMEZONE || Session.getScriptTimeZone(),
-      NOTIFICATIONS_ENABLED: (props.NOTIFICATIONS_ENABLED !== "false" && props.NOTIFICATIONS_ENABLED !== undefined) || "true"
+      NOTIFICATIONS_ENABLED: props.NOTIFICATIONS_ENABLED === "false" ? "false" : "true"
     };
   })();
 
@@ -43,8 +90,8 @@ var App = App || {};
       return ContentService.createTextOutput(JSON.stringify({ success: true, data: data }))
         .setMimeType(ContentService.MimeType.JSON);
     },
-    error: function(message) {
-      return ContentService.createTextOutput(JSON.stringify({ success: false, error: message }))
+    error: function(message, status) {
+      return ContentService.createTextOutput(JSON.stringify({ success: false, error: message, status: status || 500 }))
         .setMimeType(ContentService.MimeType.JSON);
     }
   };
@@ -74,6 +121,30 @@ var App = App || {};
       } finally {
         lock.releaseLock();
       }
+    },
+
+    paginate: function(data, page, limit) {
+      page = parseInt(page || 1, 10);
+      limit = parseInt(limit || 10, 10);
+      var total = data.length;
+      var totalPages = Math.ceil(total / limit);
+      return {
+        items: data.slice((page - 1) * limit, page * limit),
+        pagination: {
+          total_records: total,
+          total_pages: totalPages,
+          current_page: page,
+          limit_per_page: limit,
+          has_next: page < totalPages,
+          has_prev: page > 1
+        }
+      };
+    },
+
+    validate: function(payload, requiredFields) {
+      requiredFields.forEach(function(field) {
+        if (!payload[field]) throw new App.ValidationError("Missing required field: " + field);
+      });
     }
   };
 

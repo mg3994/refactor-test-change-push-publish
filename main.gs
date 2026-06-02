@@ -1,51 +1,93 @@
 /**
- * AppController to handle routing and execution flow
+ * AppController to handle routing and execution flow with Middleware support
  */
-var AppController = {
-  handleRequest: function(e) {
-    try {
-      var payload = App.Utils.parsePayload(e);
-      if (!payload.action) return App.Response.error("Action target missing");
+var AppController = (function() {
+  var registry = {};
+  var globalMiddlewares = [];
 
-      var useCase = App.UseCases[payload.action] || this._findUseCaseByAction(payload.action);
-      if (!useCase) return App.Response.error("Unknown action: " + payload.action);
+  function init() {
+    var u = App.UseCases, a = App.Constants.ACTIONS;
 
-      var result = useCase.execute(payload);
-      return App.Response.success(result);
-    } catch (err) {
-      return App.Response.error(err.toString());
-    }
-  },
+    // Global Middlewares
+    globalMiddlewares = [App.Middleware.Log];
 
-  _findUseCaseByAction: function(action) {
-    // Map action names to use case keys if they don't match exactly
-    var map = {};
-    map[App.Constants.ACTIONS.VERIFY_TOKEN] = App.UseCases.verifyToken;
-    map[App.Constants.ACTIONS.SYNC_DEVICE] = App.UseCases.syncDevice;
-    map[App.Constants.ACTIONS.LOGOUT_DEVICE] = App.UseCases.logoutDevice;
-    map[App.Constants.ACTIONS.GET_NOTIFICATIONS] = App.UseCases.getNotifications;
-    map[App.Constants.ACTIONS.SEND_NOTIFICATION] = App.UseCases.sendNotification;
-    map[App.Constants.ACTIONS.BROADCAST_NOTIFICATION] = App.UseCases.broadcastNotification;
-    map[App.Constants.ACTIONS.VERIFY_LOGISTICS] = App.UseCases.verifyLogistics;
-    map[App.Constants.ACTIONS.GET_PLACE_SUGGESTIONS] = App.UseCases.getPlaceSuggestions;
-    map[App.Constants.ACTIONS.PROCESS_LOCATION_METRICS] = App.UseCases.processLocationMetrics;
-    map[App.Constants.ACTIONS.PROCESS_PIN_DROP_METRICS] = App.UseCases.processPinDropMetrics;
-    map[App.Constants.ACTIONS.CREATE_ORDER] = App.UseCases.createOrder;
-    map[App.Constants.ACTIONS.CANCEL_ORDER] = App.UseCases.cancelOrder;
-    map[App.Constants.ACTIONS.GET_PRODUCTS] = App.UseCases.getProducts;
-    map[App.Constants.ACTIONS.GET_CATEGORIES] = App.UseCases.getCategories;
-    map[App.Constants.ACTIONS.ADD_REVIEW] = App.UseCases.addReview;
-    map[App.Constants.ACTIONS.GET_REVIEWS] = App.UseCases.getReviews;
-    map[App.Constants.ACTIONS.PROCESS_PAYMENT] = App.UseCases.processPayment;
-    map[App.Constants.ACTIONS.SEARCH_PRODUCTS] = App.UseCases.searchProducts;
+    // Registry: [UseCaseInstance, LocalMiddlewares, ValidationSchema]
+    var auth = App.Middleware.Auth;
 
-    return map[action];
+    registry[a.VERIFY_TOKEN] = [u.verifyToken, [], ["idToken"]];
+    registry[a.SYNC_DEVICE] = [u.syncDevice, [auth], ["idToken", "clientId"]];
+    registry[a.LOGOUT_DEVICE] = [u.logoutDevice, [], ["clientId"]];
+    registry[a.GET_NOTIFICATIONS] = [u.getNotifications, [auth], ["idToken"]];
+    registry[a.SEND_NOTIFICATION] = [u.sendNotification, [], ["tokens", "title", "body"]];
+    registry[a.BROADCAST_NOTIFICATION] = [u.broadcastNotification, [], ["title", "body"]];
+    registry[a.VERIFY_LOGISTICS] = [u.verifyLogistics, [], []];
+    registry[a.GET_PLACE_SUGGESTIONS] = [u.getPlaceSuggestions, [], ["inputToken"]];
+    registry[a.PROCESS_LOCATION_METRICS] = [u.processLocationMetrics, [], ["originLat", "originLng", "destinationQuery"]];
+    registry[a.PROCESS_PIN_DROP_METRICS] = [u.processPinDropMetrics, [], ["originLat", "originLng", "pinLat", "pinLng"]];
+    registry[a.CREATE_ORDER] = [u.createOrder, [auth], ["idToken", "products", "totalAmount"]];
+    registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], ["idToken", "orderId"]];
+    registry[a.GET_PRODUCTS] = [u.getProducts, [], []];
+    registry[a.GET_CATEGORIES] = [u.getCategories, [], []];
+    registry[a.ADD_REVIEW] = [u.addReview, [auth], ["idToken", "productId", "reviewText", "starRating"]];
+    registry[a.GET_REVIEWS] = [u.getReviews, [], ["productId"]];
+    registry[a.PROCESS_PAYMENT] = [u.processPayment, [auth], ["idToken", "orderId", "amount"]];
+    registry[a.SEARCH_PRODUCTS] = [u.searchProducts, [], []];
   }
-};
 
-/**
- * Main entry point for POST requests
- */
+  function runPipeline(middlewares, payload, finalTask) {
+    var index = 0;
+    function next() {
+      if (index < middlewares.length) {
+        var mw = middlewares[index++];
+        return mw(payload, next);
+      } else {
+        return finalTask(payload);
+      }
+    }
+    return next();
+  }
+
+  return {
+    handleRequest: function(e) {
+      try {
+        if (Object.keys(registry).length === 0) init();
+
+        var payload = App.Utils.parsePayload(e);
+        if (!payload.action) return App.Response.error("Action target missing", 400);
+
+        var config = registry[payload.action];
+        if (!config) return App.Response.error("Unknown action: " + payload.action, 404);
+
+        var useCase = config[0];
+        var localMiddlewares = config[1];
+        var schema = config[2];
+
+        // Combine Middlewares
+        var pipeline = globalMiddlewares.concat(localMiddlewares);
+
+        // Add implicit Validation Middleware if schema exists
+        if (schema && schema.length > 0) {
+          pipeline.push(function(p, next) {
+            App.Utils.validate(p, schema);
+            return next();
+          });
+        }
+
+        var result = runPipeline(pipeline, payload, function(p) {
+          return useCase.execute(p);
+        });
+
+        return App.Response.success(result);
+      } catch (err) {
+        var status = err.status || 500;
+        var message = err.message || err.toString();
+        if (status === 500) Logger.log("Critical Error: " + (err.stack || err));
+        return App.Response.error(message, status);
+      }
+    }
+  };
+})();
+
 function doPost(e) {
   return AppController.handleRequest(e);
 }

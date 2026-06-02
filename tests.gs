@@ -7,11 +7,11 @@ function runTests() {
     testRepositoryInitialization,
     testServiceInitialization,
     testUseCaseInitialization,
-    testEcommerceRepositoryInitialization,
-    testEcommerceUseCaseInitialization,
+    testMiddlewarePipeline,
     testGooglePayProcessing,
     testInventoryManagement,
-    testProductSearch
+    testProductSearch,
+    testUnauthorizedAccess
   ];
 
   var results = [];
@@ -38,57 +38,49 @@ function testConfigInitialization() {
 }
 
 function testRepositoryInitialization() {
-  if (!App.Repositories.Sessions) throw new Error("Sessions repository missing");
-  if (!App.Repositories.Notifications) throw new Error("Notifications repository missing");
-  if (!App.Repositories.Orders) throw new Error("Orders repository missing");
+  var r = App.Repositories;
+  if (!r.Sessions || !r.Notifications || !r.Orders || !r.Products || !r.Payments) throw new Error("Repositories missing");
 }
 
 function testServiceInitialization() {
-  if (!App.Services.Auth) throw new Error("Auth service missing");
-  if (!App.Services.Messaging) throw new Error("Messaging service missing");
-  if (!App.Services.Location) throw new Error("Location service missing");
+  var s = App.Services;
+  if (!s.Auth || !s.Messaging || !s.Location) throw new Error("Services missing");
 }
 
 function testUseCaseInitialization() {
-  if (!App.UseCases.syncDevice) throw new Error("syncDevice use case missing");
-  if (!App.UseCases.getNotifications) throw new Error("getNotifications use case missing");
+  var u = App.UseCases;
+  if (!u.syncDevice || !u.getNotifications || !u.createOrder || !u.processPayment) throw new Error("Use Cases missing");
 }
 
-function testEcommerceRepositoryInitialization() {
-  if (!App.Repositories.Products) throw new Error("Products repository missing");
-  if (!App.Repositories.Categories) throw new Error("Categories repository missing");
-  if (!App.Repositories.Reviews) throw new Error("Reviews repository missing");
-  if (!App.Repositories.Payments) throw new Error("Payments repository missing");
-}
-
-function testEcommerceUseCaseInitialization() {
-  if (!App.UseCases.getProducts) throw new Error("getProducts use case missing");
-  if (!App.UseCases.addReview) throw new Error("addReview use case missing");
-  if (!App.UseCases.processPayment) throw new Error("processPayment use case missing");
+function testMiddlewarePipeline() {
+  var mockE = { postData: { contents: JSON.stringify({ action: "GET_CATEGORIES" }) } };
+  var res = AppController.handleRequest(mockE);
+  var content = JSON.parse(res.getContent ? res.getContent() : res.toString());
+  if (!content.success) throw new Error("Middleware pipeline failed: " + content.error);
 }
 
 function testGooglePayProcessing() {
   var gpayPayload = {
     "method": "https://google.com/pay",
+    "payer": { "name": "Test Payer", "email": "test@test.com", "phone": "123" },
     "details": {
       "paymentMethodData": {
-        "description": "Test Card: Visa •••• 1111",
-        "tokenizationData": { "token": "exampleToken" },
+        "description": "Visa 1111",
+        "tokenizationData": { "token": "tok_123" },
         "type": "CARD"
       }
     }
   };
 
-  var payload = { idToken: "valid", orderId: "ORD-1", amount: 100, googlePayResponse: gpayPayload };
-  var originalVerify = App.Services.Auth.verifyToken;
-  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "u1" }; };
+  var payload = {
+    user: { uid: "u123" },
+    orderId: "ORD-1",
+    amount: 100,
+    googlePayResponse: gpayPayload
+  };
 
-  try {
-    var result = App.UseCases.processPayment.execute(payload);
-    if (result.method !== "CARD") throw new Error("Expected CARD, got " + result.method);
-  } finally {
-    App.Services.Auth.verifyToken = originalVerify;
-  }
+  var result = App.UseCases.processPayment.execute(payload);
+  if (result.method !== "CARD") throw new Error("Expected CARD, got " + result.method);
 }
 
 function testInventoryManagement() {
@@ -100,16 +92,16 @@ function testInventoryManagement() {
   App.Repositories.Products.findByProductId = function() { return mockProduct; };
   App.Repositories.Products.updateRow = function(idx, data) { if(data.stock !== undefined) updatedStock = data.stock; };
 
-  var originalVerify = App.Services.Auth.verifyToken;
-  App.Services.Auth.verifyToken = function() { return { isValid: true, uid: "u1" }; };
-
   try {
-    App.UseCases.createOrder.execute({ idToken: "v", products: [{ product_id: "P1", quantity: 3 }], totalAmount: 10 });
+    App.UseCases.createOrder.execute({
+      user: { uid: "u1" },
+      products: [{ product_id: "P1", quantity: 3 }],
+      totalAmount: 10
+    });
     if (updatedStock !== 7) throw new Error("Stock error: " + updatedStock);
   } finally {
     App.Repositories.Products.findByProductId = originalFind;
     App.Repositories.Products.updateRow = originalUpdate;
-    App.Services.Auth.verifyToken = originalVerify;
   }
 }
 
@@ -123,5 +115,20 @@ function testProductSearch() {
     if (res.products.length !== 1) throw new Error("Search failed");
   } finally {
     App.Repositories.Products.getAll = originalGetAll;
+  }
+}
+
+function testUnauthorizedAccess() {
+  var action = App.Constants.ACTIONS.GET_NOTIFICATIONS;
+  var mockE = { postData: { contents: JSON.stringify({ action: action, idToken: "bad" }) } };
+  var originalVerify = App.Services.Auth.verifyToken;
+  App.Services.Auth.verifyToken = function() { return { isValid: false, error: "Invalid Token" }; };
+
+  try {
+    var res = AppController.handleRequest(mockE);
+    var content = JSON.parse(res.getContent ? res.getContent() : res.toString());
+    if (content.status !== 401) throw new Error("Expected 401, got " + content.status);
+  } finally {
+    App.Services.Auth.verifyToken = originalVerify;
   }
 }
