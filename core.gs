@@ -46,13 +46,13 @@ var App = App || {};
       } finally {
         try {
           var uid = (payload.user && payload.user.uid) ? payload.user.uid : (payload.idToken === "guest_session" ? "guest" : "anonymous");
-          App.Repositories.Logs.add([
-            new Date().toISOString(),
-            payload.action,
-            uid,
-            status,
-            details || "Duration: " + (Date.now() - startTime) + "ms"
-          ]);
+          App.Repositories.Logs.add({
+            timestamp: new Date().toISOString(),
+            action: payload.action,
+            firebase_uid: uid,
+            status: status,
+            details: details || "Duration: " + (Date.now() - startTime) + "ms"
+          });
         } catch (logErr) {
           Logger.log("Failed to persist log: " + logErr.toString());
         }
@@ -97,6 +97,39 @@ var App = App || {};
   })();
 
   /**
+   * Application Constants
+   */
+  App.Constants = {
+    ORDER_STATUS: ORDER_STATUS,
+    ACTIONS: ACTIONS,
+    SHEET_HEADERS: SHEET_HEADERS
+  };
+
+  /**
+   * Order Status State Machine
+   */
+  App.StatusMachine = (function() {
+    var s = App.Constants.ORDER_STATUS;
+    var transitions = {};
+    transitions[s.PENDING] = [s.PAID, s.CANCELLED];
+    transitions[s.PAID] = [s.DELIVERED, s.CANCELLED];
+    transitions[s.CANCELLED] = [];
+    transitions[s.DELIVERED] = [];
+
+    return {
+      canTransition: function(from, to) {
+        if (!transitions[from]) return false;
+        return transitions[from].indexOf(to) !== -1;
+      },
+      validateTransition: function(from, to) {
+        if (!this.canTransition(from, to)) {
+          throw new App.AppError("Invalid status transition from " + from + " to " + to, 400);
+        }
+      }
+    };
+  })();
+
+  /**
    * Configuration Management
    */
   App.Config = (function() {
@@ -118,15 +151,6 @@ var App = App || {};
 
   // Backwards compatibility for getSettings()
   getSettings = function() { return App.Config; };
-
-  /**
-   * Application Constants
-   */
-  App.Constants = {
-    ORDER_STATUS: ORDER_STATUS,
-    ACTIONS: ACTIONS,
-    SHEET_HEADERS: SHEET_HEADERS
-  };
 
   /**
    * Response Helpers

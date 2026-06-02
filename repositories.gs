@@ -67,6 +67,22 @@ BaseRepository.prototype.findBy = function(filterFn) {
   return this.getAll().filter(filterFn);
 };
 
+BaseRepository.prototype.findOneBy = function(criteria) {
+  return this.getAll().find(function(r) {
+    for (var key in criteria) {
+      if (String(r[key]) !== String(criteria[key])) return false;
+    }
+    return true;
+  });
+};
+
+BaseRepository.prototype.delete = function(rowIndex) {
+  var sheet = this.getSheet();
+  sheet.deleteRow(rowIndex);
+  this._clearCache();
+  SpreadsheetApp.flush();
+};
+
 BaseRepository.prototype.findMany = function(idField, idValues) {
   var vals = Array.isArray(idValues) ? idValues : [idValues];
   return this.getAll().filter(function(r) { return vals.indexOf(r[idField]) !== -1; });
@@ -76,6 +92,11 @@ BaseRepository.prototype.add = function(dataMap) {
   var sheet = this.getSheet();
   var headers = App.Constants.SHEET_HEADERS[this.sheetName];
   var row = new Array(headers.length).fill("");
+  var now = new Date().toISOString();
+
+  if (headers.indexOf("created_at") >= 0 && !dataMap.created_at) dataMap.created_at = now;
+  if (headers.indexOf("updated_at") >= 0 && !dataMap.updated_at) dataMap.updated_at = now;
+  if (headers.indexOf("timestamp") >= 0 && !dataMap.timestamp) dataMap.timestamp = now;
 
   for (var key in dataMap) {
     var index = headers.indexOf(key);
@@ -98,10 +119,13 @@ BaseRepository.prototype.updateRows = function(updateConfigs) {
 
   var sheet = this.getSheet();
   var headers = App.Constants.SHEET_HEADERS[this.sheetName];
-  var self = this;
+  var now = new Date().toISOString();
 
   updateConfigs.forEach(function(config) {
     var rowValues = sheet.getRange(config.rowIndex, 1, 1, headers.length).getValues()[0];
+
+    if (headers.indexOf("updated_at") >= 0 && !config.data.updated_at) config.data.updated_at = now;
+
     for (var key in config.data) {
       var colIndex = headers.indexOf(key);
       if (colIndex >= 0) {

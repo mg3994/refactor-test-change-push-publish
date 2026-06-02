@@ -14,6 +14,9 @@ var AppController = (function() {
     // Registry: [UseCaseInstance, LocalMiddlewares, ValidationSchema]
     var auth = App.Middleware.Auth;
 
+    var emailPat = "^[^@]+@[^@]+\\.[^@]+$";
+    var phonePat = "^\\+?[1-9]\\d{1,14}$";
+
     registry[a.VERIFY_TOKEN] = [u.verifyToken, [auth], { idToken: "string" }];
     registry[a.SYNC_DEVICE] = [u.syncDevice, [auth], { idToken: "string", clientId: "string" }];
     registry[a.LOGOUT_DEVICE] = [u.logoutDevice, [], { clientId: "string" }];
@@ -24,7 +27,11 @@ var AppController = (function() {
     registry[a.GET_PLACE_SUGGESTIONS] = [u.getPlaceSuggestions, [], { inputToken: "string" }];
     registry[a.PROCESS_LOCATION_METRICS] = [u.processLocationMetrics, [], { originLat: "number", originLng: "number", destinationQuery: "string" }];
     registry[a.PROCESS_PIN_DROP_METRICS] = [u.processPinDropMetrics, [], { originLat: "number", originLng: "number", pinLat: "number", pinLng: "number" }];
-    registry[a.CREATE_ORDER] = [u.createOrder, [auth], { idToken: "string", products: "array" }];
+    registry[a.CREATE_ORDER] = [u.createOrder, [auth], {
+      idToken: "string",
+      products: { type: "array", items: { product_id: "string", quantity: "number" } },
+      shippingPhone: { type: "string", pattern: phonePat }
+    }];
     registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], { idToken: "string", orderId: "string" }];
     registry[a.GET_PRODUCTS] = [u.getProducts, [], {}];
     registry[a.GET_CATEGORIES] = [u.getCategories, [], {}];

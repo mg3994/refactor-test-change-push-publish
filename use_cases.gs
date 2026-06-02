@@ -161,9 +161,7 @@ CreateOrderUseCase.prototype.execute = function(payload) {
       full_address: payload.fullAddress,
       latitude: payload.latitude,
       longitude: payload.longitude,
-      customer_note: payload.customerNote || "",
-      created_at: now,
-      updated_at: now
+      customer_note: payload.customerNote || ""
     });
 
     App.EventDispatcher.dispatch("ORDER_CREATED", { orderId: id, uid: payload.user.uid, amount: finalAmount });
@@ -180,7 +178,8 @@ CancelOrderUseCase.prototype.execute = function(payload) {
   return this.utils.withLock(function() {
     var o = self.orderRepo.findByOrderId(payload.orderId);
     if (!o || o.firebase_uid !== payload.user.uid) throw new App.AppError("Order not found or permission denied", 403);
-    if (o.status === "CANCELLED") throw new App.AppError("Already cancelled", 400);
+
+    App.StatusMachine.validateTransition(o.status, App.Constants.ORDER_STATUS.CANCELLED);
 
     var items = JSON.parse(o.product_details || "[]");
     var adjustments = items.map(function(item) {
@@ -260,8 +259,7 @@ AddReviewUseCase.prototype.execute = function(payload) {
     product_id: payload.productId,
     order_id: payload.orderId || "",
     review_text: payload.reviewText,
-    star_rating: payload.starRating,
-    created_at: new Date().toISOString()
+    star_rating: payload.starRating
   });
   return { reviewed: true };
 };
@@ -362,8 +360,7 @@ ProcessPaymentUseCase.prototype.execute = function(payload) {
     payer_name: pName,
     payer_email: pEmail,
     payer_phone: pPhone,
-    raw_metadata: JSON.stringify(payload.googlePayResponse || payload.metadata || {}),
-    created_at: new Date().toISOString()
+    raw_metadata: JSON.stringify(payload.googlePayResponse || payload.metadata || {})
   });
 
   App.EventDispatcher.dispatch("PAYMENT_COMPLETED", { paymentId: id, orderId: payload.orderId, uid: payload.user.uid, amount: payload.amount });
@@ -404,68 +401,13 @@ UpdateOrderStatusUseCase.prototype.execute = function(payload) {
     var o = self.orderRepo.findByOrderId(payload.orderId);
     if (!o) throw new App.AppError("Order not found", 404);
 
-    self.orderRepo.updateRow(o._rowIndex, {
-      status: payload.status,
-      updated_at: new Date().toISOString()
-    });
+    App.StatusMachine.validateTransition(o.status, payload.status);
+
+    self.orderRepo.updateRow(o._rowIndex, { status: payload.status });
 
     App.EventDispatcher.dispatch("ORDER_STATUS_UPDATED", { orderId: payload.orderId, status: payload.status });
     return { orderId: payload.orderId, status: payload.status };
   });
 };
 
-// Application Assembly
-(function() {
-  var s = App.Services, r = App.Repositories, u = App.Utils, c = App.Config;
-
-  // Event Subscriptions
-  App.EventDispatcher.on("ORDER_CREATED", function(data) {
-    var sessions = r.Sessions.getAll().filter(function(s) { return s.firebase_uid === data.uid && s.fcm_token; });
-    var tokens = sessions.map(function(s) { return s.fcm_token; });
-    if (tokens.length > 0) {
-      s.Messaging.sendMulticast(tokens, "Order Placed!", "Your order " + data.orderId + " has been created.", { orderId: data.orderId });
-    }
-  });
-
-  App.EventDispatcher.on("PAYMENT_COMPLETED", function(data) {
-    var order = r.Orders.findByOrderId(data.orderId);
-    if (order && order.status === App.Constants.ORDER_STATUS.PENDING) {
-      r.Orders.updateRow(order._rowIndex, { status: App.Constants.ORDER_STATUS.PAID, updated_at: new Date().toISOString() });
-    }
-  });
-
-  App.EventDispatcher.on("LOW_STOCK_ALERT", function(data) {
-    r.Logs.add({
-      timestamp: new Date().toISOString(),
-      action: "LOW_STOCK_ALERT",
-      firebase_uid: "system",
-      status: "WARNING",
-      details: "Product " + data.title + " (" + data.productId + ") is low on stock: " + data.stock
-    });
-  });
-
-  App.UseCases = {
-    verifyToken: new VerifyTokenUseCase(),
-    syncDevice: new SyncDeviceUseCase(r.Sessions, u),
-    logoutDevice: new LogoutDeviceUseCase(r.Sessions, u),
-    getNotifications: new GetNotificationsUseCase(r.Notifications, u),
-    sendNotification: new SendNotificationUseCase(s.Messaging),
-    broadcastNotification: new BroadcastNotificationUseCase(s.Messaging),
-    verifyLogistics: new VerifyLogisticsUseCase(s.Location, c),
-    getPlaceSuggestions: new GetPlaceSuggestionsUseCase(s.Location),
-    processLocationMetrics: new ProcessLocationMetricsUseCase(s.Location),
-    processPinDropMetrics: new ProcessPinDropMetricsUseCase(s.Location),
-    createOrder: new CreateOrderUseCase(r.Products, r.Orders, u),
-    cancelOrder: new CancelOrderUseCase(r.Products, r.Orders, u),
-    getOrders: new GetOrdersUseCase(r.Orders, u),
-    getOrderDetails: new GetOrderDetailsUseCase(r.Orders, r.Products),
-    getProducts: new GetProductsUseCase(r.Products, r.Reviews, u),
-    getCategories: new GetCategoriesUseCase(r.Categories),
-    addReview: new AddReviewUseCase(r.Reviews),
-    getReviews: new GetReviewsUseCase(r.Reviews, r.Orders, u),
-    searchProducts: new SearchProductsUseCase(r.Products, r.Reviews, u),
-    processPayment: new ProcessPaymentUseCase(r.Payments, u),
-    refundPayment: new RefundPaymentUseCase(r.Payments, u),
-    updateOrderStatus: new UpdateOrderStatusUseCase(r.Orders, u)
-  };
-})();
+// Application logic assembly moved to bootstrap.gs

@@ -25,7 +25,9 @@ function runTests() {
     testVerifiedPurchaseTag,
     testBatchStockAdjustment,
     testRefundLogic,
-    testStatusUpdate
+    testStatusUpdate,
+    testStatusMachine,
+    testAutoTimestamp
   ];
 
   var results = [];
@@ -186,7 +188,7 @@ function testAuditLogging() {
 
   try {
     AppController.handleRequest({ postData: { contents: JSON.stringify({ action: "GET_CATEGORIES" }) } });
-    if (!lastLog || lastLog[1] !== "GET_CATEGORIES") throw new Error("Audit log missing or incorrect");
+    if (!lastLog || lastLog.action !== "GET_CATEGORIES") throw new Error("Audit log missing or incorrect");
   } finally {
     App.Repositories.Logs.add = originalAdd;
   }
@@ -364,14 +366,52 @@ function testStatusUpdate() {
   var originalUpdate = App.Repositories.Orders.updateRow;
   var newStatus = "";
 
-  App.Repositories.Orders.findByOrderId = function() { return { _rowIndex: 2, order_id: "O1" }; };
+  App.Repositories.Orders.findByOrderId = function() { return { _rowIndex: 2, order_id: "O1", status: "PENDING" }; };
   App.Repositories.Orders.updateRow = function(idx, data) { newStatus = data.status; };
 
   try {
-    App.UseCases.updateOrderStatus.execute({ orderId: "O1", status: "SHIPPED" });
-    if (newStatus !== "SHIPPED") throw new Error("Status update failed");
+    App.UseCases.updateOrderStatus.execute({ orderId: "O1", status: "PAID" });
+    if (newStatus !== "PAID") throw new Error("Status update failed");
   } finally {
     App.Repositories.Orders.findByOrderId = originalFind;
     App.Repositories.Orders.updateRow = originalUpdate;
+  }
+}
+
+function testStatusMachine() {
+  if (!App.StatusMachine.canTransition("PENDING", "PAID")) throw new Error("Should allow PENDING -> PAID");
+  if (App.StatusMachine.canTransition("CANCELLED", "PAID")) throw new Error("Should not allow CANCELLED -> PAID");
+  try {
+    App.StatusMachine.validateTransition("CANCELLED", "PAID");
+    throw new Error("Should have thrown error");
+  } catch (e) {
+    if (e.status !== 400) throw e;
+  }
+}
+
+function testAutoTimestamp() {
+  var lastData = null;
+  var repo = App.Repositories.Logs;
+
+  // Directly mock the sheet to capture the row being appended
+  var mockSheet = {
+    appendRow: function(row) { lastData = row; },
+    getDataRange: function() { return { getValues: function() { return [['timestamp', 'action', 'firebase_uid', 'status', 'details']]; } }; },
+    getRange: function() { return { setFontWeight: function() { return { setBackground: function() {} }; } }; }
+  };
+
+  var originalGetSheet = repo.getSheet;
+  repo.getSheet = function() { return mockSheet; };
+  // Force a clear cache to make sure it reads our mock headers
+  repo._clearCache();
+
+  try {
+    repo.add({ action: "TEST" });
+    // timestamp is column 0
+    if (!lastData[0]) throw new Error("Auto timestamp missing");
+    if (lastData[1] !== "TEST") throw new Error("Data mapping failed: " + lastData[1]);
+  } finally {
+    repo.getSheet = originalGetSheet;
+    repo._clearCache();
   }
 }
