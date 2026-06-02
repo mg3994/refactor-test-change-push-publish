@@ -28,7 +28,12 @@ function runTests() {
     testStatusUpdate,
     testStatusMachine,
     testAutoTimestamp,
-    testGetOrdersEnrichment
+    testGetOrdersEnrichment,
+    testProductQueryService,
+    testCouponSystem,
+    testProfileManagement,
+    testWishlistSystem,
+    testRelatedProducts
   ];
 
   var results = [];
@@ -134,14 +139,19 @@ function testInventoryManagement() {
 
 function testProductSearch() {
   var originalGetAll = App.Repositories.Products.getAll;
+  var originalReviews = App.Repositories.Reviews.findByProductId;
+
   App.Repositories.Products.getAll = function() {
-    return [{ title: "iPhone" }, { title: "Samsung" }];
+    return [{ title: "iPhone", product_id: "P1" }, { title: "Samsung", product_id: "P2" }];
   };
+  App.Repositories.Reviews.findByProductId = function() { return []; };
+
   try {
     var res = App.UseCases.searchProducts.execute({ query: "iphone" });
     if (res.products.length !== 1) throw new Error("Search failed");
   } finally {
     App.Repositories.Products.getAll = originalGetAll;
+    App.Repositories.Reviews.findByProductId = originalReviews;
   }
 }
 
@@ -437,4 +447,139 @@ function testGetOrdersEnrichment() {
     App.Repositories.Orders.findByUid = originalFindByUid;
     App.Repositories.Products.findByProductId = originalFindById;
   }
+}
+
+function testProductQueryService() {
+  var mockReviews = [{ product_id: "P1", star_rating: 5 }];
+  var mockProducts = [
+    { product_id: "P1", title: "Apple", price: 100, category_ids: "1", stock: 10, created_at: "2023-01-01" },
+    { product_id: "P2", title: "Banana", price: 50, category_ids: "2", stock: 0, created_at: "2023-02-01" }
+  ];
+
+  var originalReviews = App.Repositories.Reviews.findByProductId;
+  App.Repositories.Reviews.findByProductId = function() { return mockReviews; };
+
+  var qs = App.Services.ProductQuery;
+
+  // Test category filter
+  var res = qs.query(mockProducts, { categoryId: "2" });
+  if (res.length !== 1 || res[0].product_id !== "P2") throw new Error("Category filter failed");
+
+  // Test search query
+  res = qs.query(mockProducts, { query: "apple" });
+  if (res.length !== 1 || res[0].product_id !== "P1") throw new Error("Search query failed");
+
+  // Test stock filter
+  res = qs.query(mockProducts, { inStockOnly: true });
+  if (res.length !== 1 || res[0].product_id !== "P1") throw new Error("Stock filter failed");
+
+  // Test sorting
+  res = qs.query(mockProducts, { sortBy: "price_asc" });
+  if (res[0].product_id !== "P2") throw new Error("Sort failed");
+
+  App.Repositories.Reviews.findByProductId = originalReviews;
+}
+
+function testCouponSystem() {
+  var mockCoupon = {
+    _rowIndex: 2, code: "SAVE10", type: "PERCENTAGE", value: 10,
+    is_active: true, min_order_amount: 50, usage_count: 0, usage_limit: 5
+  };
+
+  var originalFind = App.Repositories.Coupons.findByCode;
+  var originalUpdate = App.Repositories.Coupons.updateRow;
+  App.Repositories.Coupons.findByCode = function() { return mockCoupon; };
+  App.Repositories.Coupons.updateRow = function() {};
+
+  // Test Validator
+  var validator = App.UseCases.validateCoupon;
+  var res = validator.execute({ code: "SAVE10", orderAmount: 100 });
+  if (!res.valid || res.value !== 10) throw new Error("Coupon validation failed");
+
+  // Test Order with Coupon
+  var originalProdFind = App.Repositories.Products.findByProductId;
+  App.Repositories.Products.findByProductId = function() { return { price: 100, stock: 10, product_id: "P1" }; };
+
+  var createRes = App.UseCases.createOrder.execute({
+    user: { uid: "u1" },
+    products: [{ product_id: "P1", quantity: 1 }],
+    couponCode: "SAVE10"
+  });
+
+  if (createRes.totalCalculated !== 90) throw new Error("Coupon discount calculation failed: " + createRes.totalCalculated);
+
+  App.Repositories.Coupons.findByCode = originalFind;
+  App.Repositories.Coupons.updateRow = originalUpdate;
+  App.Repositories.Products.findByProductId = originalProdFind;
+}
+
+function testProfileManagement() {
+  var mockProfile = { _rowIndex: 2, firebase_uid: "u123", display_name: "Original Name" };
+  var originalFind = App.Repositories.Profiles.findByUid;
+  var originalUpdate = App.Repositories.Profiles.updateRow;
+  var originalAdd = App.Repositories.Profiles.add;
+
+  var updatedData = null;
+  App.Repositories.Profiles.findByUid = function() { return mockProfile; };
+  App.Repositories.Profiles.updateRow = function(idx, data) { updatedData = data; };
+
+  // Test Update
+  App.UseCases.updateProfile.execute({
+    user: { uid: "u123", email: "test@test.com" },
+    displayName: "New Name",
+    savedAddresses: [{ addr: "Street 1" }]
+  });
+
+  if (updatedData.display_name !== "New Name") throw new Error("Profile update failed");
+  if (JSON.parse(updatedData.saved_addresses).length !== 1) throw new Error("Profile address save failed");
+
+  App.Repositories.Profiles.findByUid = originalFind;
+  App.Repositories.Profiles.updateRow = originalUpdate;
+  App.Repositories.Profiles.add = originalAdd;
+}
+
+function testWishlistSystem() {
+  var mockWish = { _rowIndex: 2, firebase_uid: "u1", product_ids: JSON.stringify(["P1"]) };
+  var originalFind = App.Repositories.Wishlists.findByUid;
+  var originalUpdate = App.Repositories.Wishlists.updateRow;
+  var lastUpdate = null;
+
+  App.Repositories.Wishlists.findByUid = function() { return mockWish; };
+  App.Repositories.Wishlists.updateRow = function(idx, data) { lastUpdate = data; };
+
+  // Test Toggle (Remove)
+  App.UseCases.toggleWishlist.execute({ user: { uid: "u1" }, productId: "P1" });
+  if (lastUpdate.product_ids !== "[]") throw new Error("Wishlist toggle (remove) failed");
+
+  // Test Toggle (Add)
+  App.UseCases.toggleWishlist.execute({ user: { uid: "u1" }, productId: "P2" });
+  if (JSON.parse(lastUpdate.product_ids).indexOf("P2") === -1) throw new Error("Wishlist toggle (add) failed");
+
+  App.Repositories.Wishlists.findByUid = originalFind;
+  App.Repositories.Wishlists.updateRow = originalUpdate;
+}
+
+function testRelatedProducts() {
+  var mockProducts = [
+    { product_id: "P1", category_ids: "1,2", title: "Target" },
+    { product_id: "P2", category_ids: "2", title: "Related" },
+    { product_id: "P3", category_ids: "3", title: "Other" }
+  ];
+
+  var originalFind = App.Repositories.Products.findByProductId;
+  var originalGetAll = App.Repositories.Products.getAll;
+  var originalReviews = App.Repositories.Reviews.findByProductId;
+
+  App.Repositories.Products.findByProductId = function() { return mockProducts[0]; };
+  App.Repositories.Products.getAll = function() { return mockProducts; };
+  App.Repositories.Reviews.findByProductId = function() { return []; };
+
+  var res = App.UseCases.getRelatedProducts.execute({ productId: "P1" });
+  if (res.products.length !== 1 || res.products[0].product_id !== "P2") {
+    throw new Error("Related products failed: found " + res.products.length);
+  }
+
+  App.Repositories.Products.findByProductId = originalFind;
+  App.Repositories.Products.getAll = originalGetAll;
+  App.Repositories.Reviews.findByProductId = originalReviews;
 }

@@ -119,8 +119,38 @@ ProcessPinDropMetricsUseCase.prototype.execute = function(payload) {
   return { status: "success", address: rev.formatted_address, lat: payload.pinLat, lng: payload.pinLng, distance: route.distance.text, duration: route.duration.text };
 };
 
-var CreateOrderUseCase = function(productRepo, orderRepo, utils) {
-  this.productRepo = productRepo; this.orderRepo = orderRepo; this.utils = utils;
+var ValidateCouponUseCase = function(couponRepo) {
+  this.couponRepo = couponRepo;
+};
+ValidateCouponUseCase.prototype.execute = function(payload) {
+  var coupon = this.couponRepo.findByCode(payload.code);
+  if (!coupon) throw new App.AppError("Coupon not found", 404);
+  if (!coupon.is_active) throw new App.AppError("Coupon is inactive", 400);
+
+  var now = new Date();
+  if (coupon.expiry_date && new Date(coupon.expiry_date) < now) {
+    throw new App.AppError("Coupon has expired", 400);
+  }
+
+  if (coupon.usage_limit && parseInt(coupon.usage_count || 0) >= parseInt(coupon.usage_limit)) {
+    throw new App.AppError("Coupon usage limit reached", 400);
+  }
+
+  if (payload.orderAmount && parseFloat(payload.orderAmount) < parseFloat(coupon.min_order_amount || 0)) {
+    throw new App.AppError("Order amount too low for this coupon", 400);
+  }
+
+  return {
+    valid: true,
+    code: coupon.code,
+    type: coupon.type,
+    value: parseFloat(coupon.value),
+    maxDiscount: parseFloat(coupon.max_discount || 999999)
+  };
+};
+
+var CreateOrderUseCase = function(productRepo, orderRepo, couponRepo, utils) {
+  this.productRepo = productRepo; this.orderRepo = orderRepo; this.couponRepo = couponRepo; this.utils = utils;
 };
 CreateOrderUseCase.prototype.execute = function(payload) {
   var self = this;
@@ -145,8 +175,23 @@ CreateOrderUseCase.prototype.execute = function(payload) {
 
     self.productRepo.adjustStockBatch(adjustments);
 
+    // Apply Coupon
+    var discount = 0;
+    if (payload.couponCode) {
+      var validator = new ValidateCouponUseCase(self.couponRepo);
+      var c = validator.execute({ code: payload.couponCode, orderAmount: totalAmount });
+      if (c.type === App.Constants.COUPON_TYPE.PERCENTAGE) {
+        discount = Math.min(totalAmount * (c.value / 100), c.maxDiscount);
+      } else if (c.type === App.Constants.COUPON_TYPE.FIXED_AMOUNT) {
+        discount = Math.min(c.value, totalAmount);
+      }
+      // Update usage count
+      var coupon = self.couponRepo.findByCode(payload.couponCode);
+      self.couponRepo.updateRow(coupon._rowIndex, { usage_count: parseInt(coupon.usage_count || 0) + 1 });
+    }
+
     // Add travel fee if applicable
-    var finalAmount = totalAmount + parseFloat(payload.travelFee || 0);
+    var finalAmount = totalAmount - discount + parseFloat(payload.travelFee || 0);
 
     var id = self.utils.generateId("ORD");
     var now = new Date().toISOString();
@@ -241,43 +286,15 @@ GetOrderDetailsUseCase.prototype.execute = function(payload) {
   return { order: o };
 };
 
-var GetProductsUseCase = function(productRepo, reviewRepo, utils) { this.productRepo = productRepo; this.reviewRepo = reviewRepo; this.utils = utils; };
+var GetProductsUseCase = function(productRepo, queryService, utils) {
+  this.productRepo = productRepo;
+  this.queryService = queryService;
+  this.utils = utils;
+};
 GetProductsUseCase.prototype.execute = function(payload) {
-  var all = this.productRepo.getAll();
-  var self = this;
-
-  if (payload.categoryId) {
-    all = all.filter(function(p) { return p.category_ids && String(p.category_ids).split(",").indexOf(String(payload.categoryId)) !== -1; });
-  }
-
-  // Advanced Filters
-  if (payload.minPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) >= parseFloat(payload.minPrice); });
-  if (payload.maxPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) <= parseFloat(payload.maxPrice); });
-
-  // Sorting
-  if (payload.sortBy === "price_asc") {
-    all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
-  } else if (payload.sortBy === "price_desc") {
-    all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
-  } else if (payload.sortBy === "newest") {
-    all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
-  }
-
-  // Aggregate Ratings
-  all.forEach(function(p) {
-    var reviews = self.reviewRepo.findByProductId(p.product_id);
-    var count = reviews.length;
-    var avg = count > 0 ? (reviews.reduce(function(acc, r) { return acc + parseFloat(r.star_rating || 0); }, 0) / count) : 0;
-    p.averageRating = parseFloat(avg.toFixed(1));
-    p.reviewCount = count;
-  });
-
-  // Sort by Rating (Must happen after aggregation)
-  if (payload.sortBy === "rating_desc") {
-    all.sort(function(a, b) { return b.averageRating - a.averageRating; });
-  }
-
-  var result = this.utils.paginate(all, payload.page, payload.limit);
+  var raw = this.productRepo.getAll();
+  var filtered = this.queryService.query(raw, payload);
+  var result = this.utils.paginate(filtered, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
 };
 
@@ -295,8 +312,9 @@ AddReviewUseCase.prototype.execute = function(payload) {
   return { reviewed: true };
 };
 
-var GetCartPreviewUseCase = function(productRepo, utils) {
+var GetCartPreviewUseCase = function(productRepo, couponRepo, utils) {
   this.productRepo = productRepo;
+  this.couponRepo = couponRepo;
   this.utils = utils;
 };
 GetCartPreviewUseCase.prototype.execute = function(payload) {
@@ -326,11 +344,30 @@ GetCartPreviewUseCase.prototype.execute = function(payload) {
     }
   });
 
+  var discount = 0;
+  var couponInfo = null;
+  if (payload.couponCode) {
+    try {
+      var validator = new ValidateCouponUseCase(self.couponRepo);
+      var c = validator.execute({ code: payload.couponCode, orderAmount: subtotal });
+      if (c.type === App.Constants.COUPON_TYPE.PERCENTAGE) {
+        discount = Math.min(subtotal * (c.value / 100), c.maxDiscount);
+      } else if (c.type === App.Constants.COUPON_TYPE.FIXED_AMOUNT) {
+        discount = Math.min(c.value, subtotal);
+      }
+      couponInfo = { code: c.code, discount: discount };
+    } catch (e) {
+      couponInfo = { code: payload.couponCode, error: e.message };
+    }
+  }
+
   return {
     items: products,
     subtotal: subtotal,
+    discount: discount,
+    coupon: couponInfo,
     travel_fee: parseFloat(payload.travelFee || 0),
-    total: subtotal + parseFloat(payload.travelFee || 0)
+    total: subtotal - discount + parseFloat(payload.travelFee || 0)
   };
 };
 
@@ -359,53 +396,15 @@ GetReviewsUseCase.prototype.execute = function(payload) {
   return { reviews: result.items, pagination: result.pagination };
 };
 
-var SearchProductsUseCase = function(productRepo, reviewRepo, utils) { this.productRepo = productRepo; this.reviewRepo = reviewRepo; this.utils = utils; };
+var SearchProductsUseCase = function(productRepo, queryService, utils) {
+  this.productRepo = productRepo;
+  this.queryService = queryService;
+  this.utils = utils;
+};
 SearchProductsUseCase.prototype.execute = function(payload) {
-  var q = (payload.query || "").toLowerCase();
-  var all = this.productRepo.getAll();
-  var self = this;
-
-  // Search Filtering
-  if (q) {
-    all = all.filter(function(p) {
-      return (p.title || "").toLowerCase().indexOf(q) !== -1 ||
-             (p.description || "").toLowerCase().indexOf(q) !== -1;
-    });
-  }
-
-  // Stock Filtering
-  if (payload.inStockOnly === "true") {
-    all = all.filter(function(p) { return parseInt(p.stock || 0, 10) > 0; });
-  }
-
-  // Advanced Filters
-  if (payload.minPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) >= parseFloat(payload.minPrice); });
-  if (payload.maxPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) <= parseFloat(payload.maxPrice); });
-
-  // Sorting
-  if (payload.sortBy === "price_asc") {
-    all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
-  } else if (payload.sortBy === "price_desc") {
-    all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
-  } else if (payload.sortBy === "newest") {
-    all.sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
-  }
-
-  // Aggregate Ratings
-  all.forEach(function(p) {
-    var reviews = self.reviewRepo.findByProductId(p.product_id);
-    var count = reviews.length;
-    var avg = count > 0 ? (reviews.reduce(function(acc, r) { return acc + parseFloat(r.star_rating || 0); }, 0) / count) : 0;
-    p.averageRating = parseFloat(avg.toFixed(1));
-    p.reviewCount = count;
-  });
-
-  // Sort by Rating (Must happen after aggregation)
-  if (payload.sortBy === "rating_desc") {
-    all.sort(function(a, b) { return b.averageRating - a.averageRating; });
-  }
-
-  var result = this.utils.paginate(all, payload.page, payload.limit);
+  var raw = this.productRepo.getAll();
+  var filtered = this.queryService.query(raw, payload);
+  var result = this.utils.paginate(filtered, payload.page, payload.limit);
   return { products: result.items, pagination: result.pagination };
 };
 
@@ -488,6 +487,114 @@ UpdateOrderStatusUseCase.prototype.execute = function(payload) {
 
     App.EventDispatcher.dispatch("ORDER_STATUS_UPDATED", { orderId: payload.orderId, status: payload.status });
     return { orderId: payload.orderId, status: payload.status };
+  });
+};
+
+var GetProfileUseCase = function(profileRepo) {
+  this.profileRepo = profileRepo;
+};
+GetProfileUseCase.prototype.execute = function(payload) {
+  var p = this.profileRepo.findByUid(payload.user.uid);
+  if (!p) {
+    // Return a default profile if not found
+    return {
+      firebase_uid: payload.user.uid,
+      display_name: payload.user.displayName || "User",
+      email: payload.user.email || "",
+      saved_addresses: "[]",
+      preferences: "{}"
+    };
+  }
+  return p;
+};
+
+var UpdateProfileUseCase = function(profileRepo, utils) {
+  this.profileRepo = profileRepo;
+  this.utils = utils;
+};
+
+var ToggleWishlistUseCase = function(wishlistRepo, utils) {
+  this.wishlistRepo = wishlistRepo;
+  this.utils = utils;
+};
+ToggleWishlistUseCase.prototype.execute = function(payload) {
+  var self = this;
+  return this.utils.withLock(function() {
+    var w = self.wishlistRepo.findByUid(payload.user.uid);
+    var ids = w ? JSON.parse(w.product_ids || "[]") : [];
+    var idx = ids.indexOf(payload.productId);
+
+    if (idx !== -1) {
+      ids.splice(idx, 1);
+    } else {
+      ids.push(payload.productId);
+    }
+
+    var data = { firebase_uid: payload.user.uid, product_ids: JSON.stringify(ids), updated_at: new Date().toISOString() };
+    if (w) {
+      self.wishlistRepo.updateRow(w._rowIndex, data);
+    } else {
+      self.wishlistRepo.add(data);
+    }
+    return { wishlist: ids, added: idx === -1 };
+  });
+};
+
+var GetWishlistUseCase = function(wishlistRepo, productRepo, queryService) {
+  this.wishlistRepo = wishlistRepo;
+  this.productRepo = productRepo;
+  this.queryService = queryService;
+};
+GetWishlistUseCase.prototype.execute = function(payload) {
+  var w = this.wishlistRepo.findByUid(payload.user.uid);
+  var ids = w ? JSON.parse(w.product_ids || "[]") : [];
+  if (ids.length === 0) return { products: [] };
+
+  var all = this.productRepo.getAll().filter(function(p) { return ids.indexOf(p.product_id) !== -1; });
+  // Enrich with current ratings/stock etc via query service
+  var enriched = this.queryService.query(all, {});
+  return { products: enriched };
+};
+
+var GetRelatedProductsUseCase = function(productRepo, queryService) {
+  this.productRepo = productRepo;
+  this.queryService = queryService;
+};
+GetRelatedProductsUseCase.prototype.execute = function(payload) {
+  var target = this.productRepo.findByProductId(payload.productId);
+  if (!target) throw new App.AppError("Product not found", 404);
+
+  var cats = String(target.category_ids || "").split(",");
+  var all = this.productRepo.getAll().filter(function(p) {
+    if (p.product_id === target.product_id) return false;
+    var pCats = String(p.category_ids || "").split(",");
+    return pCats.some(function(c) { return cats.indexOf(c) !== -1; });
+  });
+
+  var enriched = this.queryService.query(all, { sortBy: "rating_desc" });
+  return { products: enriched.slice(0, 10) };
+};
+
+UpdateProfileUseCase.prototype.execute = function(payload) {
+  var self = this;
+  return this.utils.withLock(function() {
+    var p = self.profileRepo.findByUid(payload.user.uid);
+    var data = {
+      display_name: payload.displayName,
+      phone_number: payload.phoneNumber,
+      saved_addresses: JSON.stringify(payload.savedAddresses || []),
+      preferences: JSON.stringify(payload.preferences || {}),
+      updated_at: new Date().toISOString()
+    };
+
+    if (p) {
+      self.profileRepo.updateRow(p._rowIndex, data);
+    } else {
+      data.firebase_uid = payload.user.uid;
+      data.email = payload.user.email;
+      self.profileRepo.add(data);
+    }
+    return { success: true };
   });
 };
 

@@ -30,7 +30,8 @@ var AppController = (function() {
     registry[a.CREATE_ORDER] = [u.createOrder, [auth], {
       idToken: "string",
       products: { type: "array", items: { product_id: "string", quantity: "number" } },
-      shippingPhone: { type: "string", pattern: phonePat }
+      shippingPhone: { type: "string", pattern: phonePat },
+      couponCode: { type: "string", optional: true }
     }];
     registry[a.CANCEL_ORDER] = [u.cancelOrder, [auth], { idToken: "string", orderId: "string" }];
     registry[a.GET_PRODUCTS] = [u.getProducts, [], {
@@ -53,10 +54,23 @@ var AppController = (function() {
     registry[a.GET_ORDERS] = [u.getOrders, [auth], { idToken: "string" }];
     registry[a.GET_ORDER_DETAILS] = [u.getOrderDetails, [auth], { idToken: "string", orderId: "string" }];
     registry[a.GET_CART_PREVIEW] = [u.getCartPreview, [], {
-      items: { type: "array", items: { product_id: "string", quantity: "number" } }
+      items: { type: "array", items: { product_id: "string", quantity: "number" } },
+      couponCode: { type: "string", optional: true }
     }];
     registry[a.REFUND_PAYMENT] = [u.refundPayment, [auth], { idToken: "string", paymentId: "string" }];
     registry[a.UPDATE_ORDER_STATUS] = [u.updateOrderStatus, [auth], { idToken: "string", orderId: "string", status: "string" }];
+    registry[a.VALIDATE_COUPON] = [u.validateCoupon, [], { code: "string", orderAmount: { type: "number", optional: true } }];
+    registry[a.GET_PROFILE] = [u.getProfile, [auth], { idToken: "string" }];
+    registry[a.UPDATE_PROFILE] = [u.updateProfile, [auth], {
+      idToken: "string",
+      displayName: "string",
+      phoneNumber: { type: "string", optional: true },
+      savedAddresses: { type: "array", optional: true },
+      preferences: { type: "object", optional: true }
+    }];
+    registry[a.TOGGLE_WISHLIST] = [u.toggleWishlist, [auth], { idToken: "string", productId: "string" }];
+    registry[a.GET_WISHLIST] = [u.getWishlist, [auth], { idToken: "string" }];
+    registry[a.GET_RELATED_PRODUCTS] = [u.getRelatedProducts, [], { productId: "string" }];
   }
 
   function runPipeline(middlewares, payload, finalTask) {

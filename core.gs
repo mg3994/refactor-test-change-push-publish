@@ -101,6 +101,7 @@ var App = App || {};
    */
   App.Constants = {
     ORDER_STATUS: ORDER_STATUS,
+    COUPON_TYPE: COUPON_TYPE,
     ACTIONS: ACTIONS,
     SHEET_HEADERS: SHEET_HEADERS
   };

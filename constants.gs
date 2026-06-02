@@ -5,6 +5,12 @@ var ORDER_STATUS = {
   DELIVERED: "DELIVERED",
 };
 
+var COUPON_TYPE = {
+  PERCENTAGE: "PERCENTAGE",
+  FIXED_AMOUNT: "FIXED_AMOUNT",
+  FREE_SHIPPING: "FREE_SHIPPING"
+};
+
 var ACTIONS = {
   // Authentication & Notification Actions
   VERIFY_TOKEN: "verifyFirebaseToken",
@@ -43,6 +49,12 @@ var ACTIONS = {
   GET_CART_PREVIEW: "GET_CART_PREVIEW",
   REFUND_PAYMENT: "REFUND_PAYMENT",
   UPDATE_ORDER_STATUS: "UPDATE_ORDER_STATUS",
+  VALIDATE_COUPON: "VALIDATE_COUPON",
+  GET_PROFILE: "GET_PROFILE",
+  UPDATE_PROFILE: "UPDATE_PROFILE",
+  TOGGLE_WISHLIST: "TOGGLE_WISHLIST",
+  GET_WISHLIST: "GET_WISHLIST",
+  GET_RELATED_PRODUCTS: "GET_RELATED_PRODUCTS"
 };
 
 var SHEET_HEADERS = {
@@ -102,6 +114,16 @@ var SHEET_HEADERS = {
     "star_rating",
     "created_at",
   ],
+  profiles: [
+    "firebase_uid",
+    "display_name",
+    "email",
+    "phone_number",
+    "saved_addresses",
+    "preferences",
+    "created_at",
+    "updated_at"
+  ],
   notifications: [
     "notification_id",
     "firebase_uid",
@@ -117,5 +139,23 @@ var SHEET_HEADERS = {
     "firebase_uid",
     "status",
     "details"
+  ],
+  coupons: [
+    "coupon_id",
+    "code",
+    "type",
+    "value",
+    "min_order_amount",
+    "max_discount",
+    "expiry_date",
+    "usage_limit",
+    "usage_count",
+    "is_active",
+    "created_at"
+  ],
+  wishlists: [
+    "firebase_uid",
+    "product_ids",
+    "updated_at"
   ],
 };

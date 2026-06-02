@@ -218,11 +218,72 @@ LocationService.prototype.getDistanceAndDuration = function(origin, destination)
   return res.routes[0].legs[0];
 };
 
+/**
+ * ProductQueryService for shared filtering/sorting/aggregation logic
+ */
+var ProductQueryService = function(reviewRepo) {
+  this.reviewRepo = reviewRepo;
+};
+
+ProductQueryService.prototype.query = function(products, options) {
+  var self = this;
+  var all = products.slice();
+
+  // 1. Category Filter
+  if (options.categoryId) {
+    all = all.filter(function(p) { return p.category_ids && String(p.category_ids).split(",").indexOf(String(options.categoryId)) !== -1; });
+  }
+
+  // 2. Search Query Filter
+  if (options.query) {
+    var q = options.query.toLowerCase();
+    all = all.filter(function(p) {
+      return (p.title || "").toLowerCase().indexOf(q) !== -1 ||
+             (p.description || "").toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  // 3. Stock Filter
+  if (options.inStockOnly === "true" || options.inStockOnly === true) {
+    all = all.filter(function(p) { return parseInt(p.stock || 0, 10) > 0; });
+  }
+
+  // 4. Price Filters
+  if (options.minPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) >= parseFloat(options.minPrice); });
+  if (options.maxPrice !== undefined) all = all.filter(function(p) { return parseFloat(p.price || 0) <= parseFloat(options.maxPrice); });
+
+  // 5. Initial Sorting (Price/Newest)
+  if (options.sortBy === "price_asc") {
+    all.sort(function(a, b) { return parseFloat(a.price || 0) - parseFloat(b.price || 0); });
+  } else if (options.sortBy === "price_desc") {
+    all.sort(function(a, b) { return parseFloat(b.price || 0) - parseFloat(a.price || 0); });
+  } else if (options.sortBy === "newest") {
+    all.sort(function(a, b) { return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(); });
+  }
+
+  // 6. Aggregate Ratings
+  all.forEach(function(p) {
+    var reviews = self.reviewRepo.findByProductId(p.product_id);
+    var count = reviews.length;
+    var avg = count > 0 ? (reviews.reduce(function(acc, r) { return acc + parseFloat(r.star_rating || 0); }, 0) / count) : 0;
+    p.averageRating = parseFloat(avg.toFixed(1));
+    p.reviewCount = count;
+  });
+
+  // 7. Rating Sort (After aggregation)
+  if (options.sortBy === "rating_desc") {
+    all.sort(function(a, b) { return b.averageRating - a.averageRating; });
+  }
+
+  return all;
+};
+
 // Initialize services
 (function() {
   App.Services = {
     Auth: new AuthService(),
     Messaging: new MessagingService(),
-    Location: new LocationService()
+    Location: new LocationService(),
+    ProductQuery: new ProductQueryService(App.Repositories.Reviews)
   };
 })();

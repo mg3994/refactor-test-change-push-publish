@@ -232,6 +232,39 @@ LogRepository.prototype.constructor = LogRepository;
 
 // Initialize repositories
 (function() {
+  /**
+   * Coupons Repository
+   */
+  var CouponRepository = function() {
+    BaseRepository.call(this, "coupons");
+  };
+  CouponRepository.prototype = Object.create(BaseRepository.prototype);
+  CouponRepository.prototype.findByCode = function(code) {
+    return this.findOneBy("code", code);
+  };
+
+  /**
+   * Profile Repository
+   */
+  var ProfileRepository = function() {
+    BaseRepository.call(this, "profiles");
+  };
+  ProfileRepository.prototype = Object.create(BaseRepository.prototype);
+  ProfileRepository.prototype.findByUid = function(uid) {
+    return this.findOneBy("firebase_uid", uid);
+  };
+
+  /**
+   * Wishlist Repository
+   */
+  var WishlistRepository = function() {
+    BaseRepository.call(this, "wishlists");
+  };
+  WishlistRepository.prototype = Object.create(BaseRepository.prototype);
+  WishlistRepository.prototype.findByUid = function(uid) {
+    return this.findOneBy("firebase_uid", uid);
+  };
+
   App.Repositories = {
     Sessions: new SessionRepository(),
     Notifications: new NotificationRepository(),
@@ -240,6 +273,9 @@ LogRepository.prototype.constructor = LogRepository;
     Categories: new CategoryRepository(),
     Reviews: new ReviewRepository(),
     Payments: new PaymentRepository(),
-    Logs: new LogRepository()
+    Logs: new LogRepository(),
+    Coupons: new CouponRepository(),
+    Profiles: new ProfileRepository(),
+    Wishlists: new WishlistRepository()
   };
 })();
