@@ -9,6 +9,16 @@ function generateUniqueId(prefix) {
   return prefix + "-" + datePart + "-" + uuidPart;
 }
 
+/**
+ * Abstracted check to see if an order is eligible for cancellation.
+ * * @param {string} currentStatus - The current status of the order.
+ * @return {boolean} True if the order can be cancelled, false otherwise.
+ */
+function isOrderCancellable(currentStatus) {
+  // Checks if the current status is NOT in our forbidden list
+  return !NON_CANCELLABLE_STATUSES.includes(currentStatus);
+}
+
 function parseRequestPayload(e) {
   try {
     return e.postData && e.postData.contents
@@ -117,8 +127,6 @@ function getFirebasePublicCertificates(forceRefresh) {
   }
 }
 
-
-
 /**
  * Generates or retrieves a cached OAuth2 access token for FCM V1 API
  */
@@ -146,9 +154,10 @@ function getFcmAccessToken(forceRefresh) {
     }
 
     // Handle both stringified JSON or object formats safely
-    var serviceAccount = typeof settings.FIREBASE_SERVICE_ACCOUNT === 'string' 
-      ? JSON.parse(settings.FIREBASE_SERVICE_ACCOUNT) 
-      : settings.FIREBASE_SERVICE_ACCOUNT;
+    var serviceAccount =
+      typeof settings.FIREBASE_SERVICE_ACCOUNT === "string"
+        ? JSON.parse(settings.FIREBASE_SERVICE_ACCOUNT)
+        : settings.FIREBASE_SERVICE_ACCOUNT;
 
     var now = Math.floor(Date.now() / 1000);
     var expiry = now + 3600; // 1 hour
@@ -159,35 +168,40 @@ function getFcmAccessToken(forceRefresh) {
       scope: "https://www.googleapis.com/auth/firebase.messaging",
       aud: "https://oauth2.googleapis.com/token",
       exp: expiry,
-      iat: now
+      iat: now,
     });
 
-    var base64Encode = function(str) {
-      return Utilities.base64EncodeWebSafe(str).replace(/=+$/, '');
+    var base64Encode = function (str) {
+      return Utilities.base64EncodeWebSafe(str).replace(/=+$/, "");
     };
 
     var signatureInput = base64Encode(header) + "." + base64Encode(payload);
-    var signatureBytes = Utilities.computeRsaSha256Signature(signatureInput, serviceAccount.private_key);
+    var signatureBytes = Utilities.computeRsaSha256Signature(
+      signatureInput,
+      serviceAccount.private_key,
+    );
     var jwt = signatureInput + "." + base64Encode(signatureBytes);
 
     var response = UrlFetchApp.fetch("https://oauth2.googleapis.com/token", {
       method: "post",
       payload: {
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: jwt
+        assertion: jwt,
       },
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
     });
 
     if (response.getResponseCode() !== 200) {
-      throw new Error("OAuth token generation failed: " + response.getContentText());
+      throw new Error(
+        "OAuth token generation failed: " + response.getContentText(),
+      );
     }
 
     var tokenData = JSON.parse(response.getContentText());
     var accessToken = tokenData.access_token;
 
     // Cache token slightly shorter than 1 hour for a safety buffer
-    cache.put(CACHE_KEY, accessToken, 3300); 
+    cache.put(CACHE_KEY, accessToken, 3300);
 
     return accessToken;
   } finally {

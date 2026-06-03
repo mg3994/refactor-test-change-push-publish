@@ -1,8 +1,34 @@
 var ORDER_STATUS = {
+  // 1. Initial Flow
   PENDING: "PENDING",
-  CANCELLED: "CANCELLED",
+  PLACED: "PLACED",
+
+  // 2. Warehouse/Fulfillment Phase (New)
+  PROCESSING: "PROCESSING",
+
+  // 3. Logistics Phase
+  ASSIGNED: "ASSIGNED",
+  IN_TRANSIT: "IN_TRANSIT",
+
+  // 4. Delivery Exceptions (New)
+  FAILED_ATTEMPT: "FAILED_ATTEMPT",
+
+  // 5. Final Success
   DELIVERED: "DELIVERED",
+
+  // 6. Cancellations & Returns (Expanded)
+  CANCELLED: "CANCELLED",
+  RETURN_REQUESTED: "RETURN_REQUESTED",
+  RETURNED: "RETURNED",
+  REFUNDED: "REFUNDED",
 };
+
+// Abstraction Array: Grouping the final states where cancellation is impossible
+var NON_CANCELLABLE_STATUSES = [
+  ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.REFUNDED,
+  ORDER_STATUS.CANCELLED, // Added this so you can't cancel an already cancelled order
+];
 
 var ACTIONS = {
   // Authentication & Notification Actions
@@ -29,6 +55,9 @@ var ACTIONS = {
 
   CREATE_ORDER: "CREATE_ORDER",
   CANCEL_ORDER: "CANCEL_ORDER",
+
+  // New Payment Action
+  RECORD_PAYMENT: "RECORD_PAYMENT"
 };
 
 var SHEET_HEADERS = {
@@ -73,7 +102,7 @@ var SHEET_HEADERS = {
     "price",
     "image_url",
     "stock",
-    "category_ids",
+    "category_ids", // ultiple categories can be comma-separated
     "created_at",
   ],
   reviews: [

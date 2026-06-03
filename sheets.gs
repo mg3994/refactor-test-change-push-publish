@@ -1,5 +1,5 @@
 function getOrCreateSheet(name) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = SpreadsheetApp.getActiveSpreadsheet(); // comment me and tht if not the scope of the function is global and not bound to a container
 
   // If not bound to a container, fall back to the standalone spreadsheet ID
   if (!ss) {

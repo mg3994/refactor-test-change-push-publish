@@ -39,6 +39,17 @@ function doPost(e) {
       case ACTIONS.VERIFY_LOGISTICS:
         return handleVerifyLogistics(payload);
 
+      // --- 🛒 NEW ORDER MANAGEMENT ROUTING ---
+      case ACTIONS.CREATE_ORDER:
+        return handleCreateOrderAction(payload);
+
+      case ACTIONS.CANCEL_ORDER:
+        return handleCancelOrderAction(payload);
+
+      // Added Payment Route
+      case ACTIONS.RECORD_PAYMENT:
+        return handleRecordPaymentAction(payload);
+
       default:
         return jsonError("Unknown action: " + payload.action);
     }
